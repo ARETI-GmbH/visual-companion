@@ -25,6 +25,7 @@ const dispatcher = new Dispatcher({
     else if (msg.type === 'navigate') window.location.href = msg.url;
     else if (msg.type === 'reload') window.location.reload();
     else if (msg.type === 'evaluate') handleEvaluate(dispatcher, msg);
+    else if (msg.type === 'buffer-update') overlay.setSelections(msg.items ?? []);
   },
 });
 

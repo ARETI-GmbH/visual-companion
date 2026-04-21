@@ -22,6 +22,10 @@ export interface PtyBridgeControl {
     /** Clear any sticky pending prefix — usually called when the user
      *  presses Esc on the companion pane to drop the active selection. */
     clearPendingPrefix(): void;
+    /** Simulate the user pressing Enter in the terminal: commits the
+     *  current prefix (if any) + userBuffer and fires the newline.
+     *  Used by the shell's "Send to claude" button. */
+    pressEnter(): void;
     onTerminalInput(handler: (data: string) => void): () => void;
 }
 export declare function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions): PtyBridgeControl;

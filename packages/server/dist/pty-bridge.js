@@ -312,6 +312,14 @@ export function registerPtyBridge(app, opts) {
             pendingPrefix = null;
             process.stderr.write(`[vc] clearPendingPrefix\n`);
         },
+        pressEnter() {
+            if (!currentPty)
+                return;
+            process.stderr.write(`[vc] pressEnter (programmatic)\n`);
+            if (!commitWithPrefix(currentPty)) {
+                currentPty.write('\r');
+            }
+        },
         onTerminalInput(handler) {
             inputListeners.add(handler);
             return () => inputListeners.delete(handler);

@@ -1,4 +1,14 @@
-export type EventType = 'pointer' | 'console' | 'network' | 'mutation' | 'navigation' | 'error' | 'clear-selection';
+export type EventType =
+  | 'pointer'
+  | 'console'
+  | 'network'
+  | 'mutation'
+  | 'navigation'
+  | 'error'
+  | 'clear-selection'
+  | 'remove-selection'
+  | 'rename-selection'
+  | 'send-selections';
 
 export interface BaseEvent {
   id: string;
@@ -53,4 +63,7 @@ export type CompanionEvent =
   | (BaseEvent & { type: 'mutation'; payload: { adds: number; removes: number; attributeChanges: number } })
   | (BaseEvent & { type: 'navigation'; payload: { newUrl: string; referrer: string } })
   | (BaseEvent & { type: 'error'; payload: { message: string; stack: string | null } })
-  | (BaseEvent & { type: 'clear-selection'; payload: unknown });
+  | (BaseEvent & { type: 'clear-selection'; payload: unknown })
+  | (BaseEvent & { type: 'remove-selection'; payload: { id: string } })
+  | (BaseEvent & { type: 'rename-selection'; payload: { id: string; label: string } })
+  | (BaseEvent & { type: 'send-selections'; payload: unknown });

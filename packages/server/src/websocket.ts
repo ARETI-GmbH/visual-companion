@@ -8,6 +8,10 @@ import type { CompanionEvent } from './types';
 export interface WebSocketOptions {
   store: EventStore;
   onEvent?: (event: CompanionEvent) => void;
+  /** Fired right after a new client completes the WS upgrade. Useful
+   *  for replaying server-authoritative state (e.g. the selection
+   *  buffer) so reconnects don't start blank. */
+  onNewClient?: () => void;
 }
 
 export interface ServerMessage {
@@ -32,6 +36,7 @@ export function registerCompanionWebSocket(
   app.get('/_companion/ws', { websocket: true } as any, (conn: any) => {
     const socket: WebSocket = conn.socket ?? conn;
     clients.add(socket);
+    try { opts.onNewClient?.(); } catch { /* notifier errors must not kill the socket */ }
     socket.on('message', (raw: Buffer) => {
       try {
         const incoming = JSON.parse(raw.toString());

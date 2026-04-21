@@ -10,6 +10,7 @@ import { EventStore } from './event-store.js';
 import { ScreenshotCache } from './screenshot-cache.js';
 import { registerPtyBridge } from './pty-bridge.js';
 import { registerMcpHandlers } from './mcp-handlers.js';
+import { SelectionBuffer } from './selection-buffer.js';
 async function main() {
     const cfg = getConfigFromEnv();
     const app = Fastify({ logger: { level: 'error' } });
@@ -40,13 +41,64 @@ async function main() {
     }
     const store = new EventStore({ maxEvents: 5000, maxAgeMs: 5 * 60 * 1000 });
     const screenshots = new ScreenshotCache(100);
+    const selectionBuffer = new SelectionBuffer();
     let gatewayRef = null;
     let ptyBridgeRef = null;
+    // Rebuild the pty's sticky prefix from the current buffer and
+    // broadcast the new chip list to all connected clients (shell panel
+    // + inject overlay). One call per state mutation keeps the two
+    // downstream views coherent without them having to own the buffer.
+    function syncBuffer() {
+        const prefix = selectionBuffer.buildPrefix();
+        if (prefix)
+            ptyBridgeRef?.setPendingPrefix?.(prefix);
+        else
+            ptyBridgeRef?.clearPendingPrefix?.();
+        gatewayRef?.broadcast({
+            type: 'buffer-update',
+            items: selectionBuffer.summaries(),
+        });
+    }
     const gateway = registerCompanionWebSocket(app, {
         store,
+        onNewClient: () => {
+            // Fresh connection (shell reload, inject reload after nav,
+            // plugin update) — replay the buffer so chips + overlays come
+            // back immediately without waiting for the next state change.
+            gatewayRef?.broadcast({
+                type: 'buffer-update',
+                items: selectionBuffer.summaries(),
+            });
+        },
         onEvent: (ev) => {
             if (ev.type === 'clear-selection') {
-                ptyBridgeRef?.clearPendingPrefix?.();
+                selectionBuffer.clear();
+                syncBuffer();
+                return;
+            }
+            if (ev.type === 'remove-selection') {
+                const { id } = ev.payload;
+                if (selectionBuffer.remove(id))
+                    syncBuffer();
+                return;
+            }
+            if (ev.type === 'rename-selection') {
+                const { id, label } = ev.payload;
+                if (selectionBuffer.rename(id, label))
+                    syncBuffer();
+                return;
+            }
+            if (ev.type === 'send-selections') {
+                // "Send to claude" button in the buffer panel. Programmatic
+                // Enter in the pty — whatever the user has typed in claude's
+                // prompt line commits with the sticky prefix. Buffer + prefix
+                // are kept for 2 s so claude's immediate get_pointed_elements
+                // call succeeds before we clear.
+                ptyBridgeRef?.pressEnter?.();
+                setTimeout(() => {
+                    selectionBuffer.clear();
+                    syncBuffer();
+                }, 2000);
                 return;
             }
             if (ev.type !== 'pointer')
@@ -60,32 +112,15 @@ async function main() {
             const preview = p.textContent
                 ? p.textContent.replace(/\s+/g, ' ').slice(0, 80).trim()
                 : '';
-            // 1) Show the sidebar badge so the user gets visual feedback.
-            gatewayRef?.broadcast({
-                type: 'selection-update',
-                selector: p.cssSelector,
+            selectionBuffer.add({
+                kind: p.kind === 'region' ? 'region' : 'element',
                 url: ev.url,
-                pathname,
-                width: Math.round(p.boundingBox.width),
-                height: Math.round(p.boundingBox.height),
-                text: preview,
+                pathname: pathname || '/',
+                selector: p.cssSelector,
+                textPreview: preview,
+                payload: p,
             });
-            // 2) Queue the selection context as a hidden prefix for claude's
-            //    next prompt. The prompt line stays clean for the user — the
-            //    pty bridge rewrites the line at Enter time so claude sees
-            //    "[markiert: …] <user's question>" as a single message.
-            //
-            //    We include an inline MCP hint. Server-level instructions
-            //    already tell claude to call get_pointed_element on
-            //    [markiert], but some sessions don't pick those up on the
-            //    first initialize — the inline nudge is a defensive
-            //    second layer so the flow works regardless.
-            const selector = p.cssSelector;
-            const path = pathname || '/';
-            const snippet = preview
-                ? `[markiert: ${selector} · ${path} · "${preview}" — bitte zuerst MCP get_pointed_element aufrufen] `
-                : `[markiert: ${selector} · ${path} — bitte zuerst MCP get_pointed_element aufrufen] `;
-            ptyBridgeRef?.setPendingPrefix(snippet);
+            syncBuffer();
         },
     });
     gatewayRef = gateway;
@@ -128,7 +163,7 @@ async function main() {
         claudeArgs: cfg.claudeArgs,
     });
     ptyBridgeRef = pty;
-    registerMcpHandlers(app, { store, gateway, pty });
+    registerMcpHandlers(app, { store, gateway, pty, buffer: selectionBuffer });
     // Profile dir for potential cleanup later
     const profileDir = `/tmp/visual-companion-${process.pid}`;
     try {

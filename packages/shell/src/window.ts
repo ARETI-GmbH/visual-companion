@@ -1,5 +1,6 @@
 import { initTerminal } from './terminal';
 import { initIframe } from './iframe';
+import { initBufferPanel } from './buffer-panel';
 
 const iframe = document.getElementById('app-frame') as HTMLIFrameElement;
 const urlInput = document.getElementById('url-input') as HTMLInputElement;
@@ -16,6 +17,12 @@ const targetUrl = config.get('target') ?? '/';
 
 initIframe({ iframe, urlInput, reloadBtn, devtoolsBtn, backBtn, forwardBtn, targetUrl });
 initTerminal({ container: document.getElementById('terminal')! });
+initBufferPanel({
+  panel: document.getElementById('buffer-panel')!,
+  chipsEl: document.getElementById('buffer-chips')!,
+  sendBtn: document.getElementById('btn-send-selections')!,
+  clearBtn: document.getElementById('btn-clear-selections')!,
+});
 
 // Draggable divider
 let dragging = false;

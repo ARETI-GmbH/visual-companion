@@ -2,21 +2,38 @@ import { FastifyInstance } from 'fastify';
 import { EventStore } from './event-store.js';
 import { WebSocketGateway } from './websocket.js';
 import { PtyBridgeControl } from './pty-bridge.js';
+import { SelectionBuffer } from './selection-buffer.js';
 
 export interface McpHandlersOptions {
   store: EventStore;
   gateway: WebSocketGateway;
   pty: PtyBridgeControl;
+  buffer: SelectionBuffer;
 }
 
 export function registerMcpHandlers(app: FastifyInstance, opts: McpHandlersOptions): void {
-  const { store, gateway, pty } = opts;
+  const { store, gateway, pty, buffer } = opts;
 
   // --- QUERY TOOLS (data lives in event store) ---
 
   app.post('/_companion/mcp/get_pointed_element', async () => {
+    // Prefer the buffer: if the user has multiple selections active,
+    // "the element" colloquially means the MOST RECENT one they
+    // picked, which is the last item in the buffer. Falling back to
+    // the event store covers the case where the user has cleared
+    // (buffer empty) but still wants historical context.
+    const latest = buffer.list().at(-1);
+    if (latest) return latest.payload;
     const evt = store.getLatestPointer();
     return evt ? evt.payload : null;
+  });
+
+  app.post('/_companion/mcp/get_pointed_elements', async () => {
+    // Full multi-select buffer. Each entry has {id, label, kind,
+    // url, pathname, selector, textPreview, payload, addedAt} —
+    // the label ("#1", "#2", …) is what the user referenced in
+    // their prompt prefix, so claude can map label → payload.
+    return buffer.list();
   });
 
   app.post('/_companion/mcp/get_pointed_history', async (req) => {
@@ -108,8 +125,16 @@ export function registerMcpHandlers(app: FastifyInstance, opts: McpHandlersOptio
 
   app.post('/_companion/mcp/evaluate_in_page', async (req) => {
     const { expression } = req.body as { expression: string };
-    const confirmed = await confirmInTerminal(pty, expression);
-    if (!confirmed) return { cancelled: true };
+    // Don't interrupt claude's Ink TUI with a terminal-level [y/N]
+    // prompt — the two render streams fight for cursor positions
+    // and leave the terminal visibly corrupted (wrapping, ghost
+    // characters, scrolled prompts). Log the expression to stderr
+    // for audit and proceed. The user can `/visual-companion-stop`
+    // if anything looks wrong.
+    process.stderr.write(
+      `[vc] evaluate_in_page: ${expression.slice(0, 400).replace(/\n/g, ' ')}\n`,
+    );
+    void pty; // intentionally unused — kept in McpHandlersOptions for future
     return proxyToBrowser(gateway, { kind: 'evaluate', expression });
   });
 }
@@ -126,32 +151,4 @@ async function proxyToBrowser(gateway: WebSocketGateway, payload: any, timeoutMs
   });
 }
 
-async function confirmInTerminal(pty: PtyBridgeControl, expression: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const prompt = `\r\n\x1b[33m[visual-companion]\x1b[0m Claude wants to evaluate:\r\n\x1b[90m${expression.slice(0, 400)}\x1b[0m\r\nAllow? [y/N] `;
-    pty.writeToTerminal(prompt);
-    let buffer = '';
-    const timeout = setTimeout(() => {
-      unsubscribe();
-      pty.writeToTerminal('\r\n[timeout — denied]\r\n');
-      resolve(false);
-    }, 30_000);
-    const unsubscribe = pty.onTerminalInput((data: string) => {
-      for (const char of data) {
-        if (char === '\r' || char === '\n') {
-          const answer = buffer.trim().toLowerCase();
-          clearTimeout(timeout);
-          unsubscribe();
-          pty.writeToTerminal('\r\n');
-          resolve(answer === 'y' || answer === 'yes');
-          return;
-        }
-        if (char === '\x7f' || char === '\b') {
-          buffer = buffer.slice(0, -1);
-        } else if (char >= ' ' && char <= '~') {
-          buffer += char;
-        }
-      }
-    });
-  });
-}
+// confirmInTerminal removed: see evaluate_in_page handler for rationale.

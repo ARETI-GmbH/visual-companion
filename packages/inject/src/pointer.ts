@@ -72,10 +72,10 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
       if (dx > 5 || dy > 5) {
         const start = regionStart;
         const end = { x: e.clientX, y: e.clientY };
+        // Overlay frame for the region pick will appear via the
+        // buffer-update round-trip from the server — same code-path
+        // as element picks, so multiple regions coexist cleanly.
         await emitRegion(dispatcher, start, end);
-        const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
-        const w = Math.abs(end.x - start.x), h = Math.abs(end.y - start.y);
-        overlay.showSelectedRegion(x, y, w, h);
         regionStart = null;
         overlay.hideRegionBox();
         e.preventDefault(); e.stopPropagation();
@@ -89,30 +89,29 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
     if (!pickingActive) return;
     e.preventDefault(); e.stopPropagation();
     const el = e.target as Element;
-    const sel = uniqueSelector(el);
-    // Hide the live hover frame and the in-progress region box as soon as
-    // we commit a click — otherwise the user sees hover + selected at
-    // the same time and it looks like we've selected two things.
+    // Hide the live hover frame as soon as we commit a click —
+    // otherwise hover + selected show at the same time and it looks
+    // like we've selected two things. The actual selected frame
+    // comes back through the buffer-update broadcast.
     overlay.hideHover();
     overlay.hideRegionBox();
-    overlay.showSelected(el, sel);
-    await emitPointer(dispatcher, el);
+    await emitPointer(dispatcher, el, 'element');
   }, true);
 
-  // Escape clears the persistent selection so the user can reset without
-  // having to click an empty spot. Also tells the server to drop the
-  // sticky pending prefix, so claude won't keep referencing a selection
-  // the user has explicitly dismissed.
+  // Escape clears the entire multi-select buffer server-side. The
+  // buffer-update broadcast that follows wipes all on-screen frames.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      overlay.hideSelected();
-      overlay.hideSelectedRegion();
       dispatcher.sendRaw({ type: 'clear-selection', timestamp: Date.now() });
     }
   });
 }
 
-async function emitPointer(dispatcher: Dispatcher, el: Element): Promise<void> {
+async function emitPointer(
+  dispatcher: Dispatcher,
+  el: Element,
+  kind: 'element' | 'region',
+): Promise<void> {
   const r = el.getBoundingClientRect();
   const styles = filterComputedStyles(window.getComputedStyle(el));
   const [screenshot, sourceLocation] = await Promise.all([
@@ -139,6 +138,7 @@ async function emitPointer(dispatcher: Dispatcher, el: Element): Promise<void> {
     timestamp: Date.now(),
     url: window.location.href,
     payload: {
+      kind,
       tagName: el.tagName.toLowerCase(),
       id: el.id || null,
       classes: Array.from(el.classList),
@@ -169,5 +169,5 @@ async function emitRegion(
   });
   const anchor = enclosed[0];
   if (!anchor) return;
-  await emitPointer(dispatcher, anchor);
+  await emitPointer(dispatcher, anchor, 'region');
 }

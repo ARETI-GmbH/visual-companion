@@ -5,6 +5,10 @@ import type { CompanionEvent } from './types';
 export interface WebSocketOptions {
     store: EventStore;
     onEvent?: (event: CompanionEvent) => void;
+    /** Fired right after a new client completes the WS upgrade. Useful
+     *  for replaying server-authoritative state (e.g. the selection
+     *  buffer) so reconnects don't start blank. */
+    onNewClient?: () => void;
 }
 export interface ServerMessage {
     type: 'highlight' | 'scroll_to' | 'navigate' | 'reload' | 'evaluate';

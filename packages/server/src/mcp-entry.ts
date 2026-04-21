@@ -8,8 +8,9 @@ const port = parseInt(process.env.VISUAL_COMPANION_PORT ?? '0', 10);
 const client = port > 0 ? new DaemonClient(port) : null;
 
 const TOOLS = [
-  { name: 'get_pointed_element', description: 'Get the element the user just Alt+clicked or region-selected in the companion pane, with full context (DOM, computed styles, screenshot, source-map, ancestors). Call this whenever the user refers to "this element", "das hier", "the thing I selected", or whenever you see a [📍 companion] notification line in the terminal whose details you have not loaded yet.', inputSchema: { type: 'object', properties: {} } },
-  { name: 'get_pointed_history', description: 'Get the last N elements the user pointed at (same payload as get_pointed_element). Useful when the user says "the one before that", compares two selections, or refers to an earlier selection.', inputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] } },
+  { name: 'get_pointed_element', description: 'Get the MOST RECENT element the user Alt+Shift-clicked / region-selected, with full context (DOM, computed styles, screenshot, source-map, ancestors). Use when the prefix has a SINGLE [markiert: …] entry or the user refers to "this element", "das hier", "the thing I selected".', inputSchema: { type: 'object', properties: {} } },
+  { name: 'get_pointed_elements', description: 'Get the FULL multi-select buffer — every element currently in the chip panel, in pick order. Returns an array of {id, label, kind, url, pathname, selector, textPreview, payload}. The label ("#1", "#2", …) matches the labels the user sees in the shell panel and references in their prompt ("schau dir #1 und #3 an"). Use whenever the prefix contains multiple [markiert: #1=…, #2=…] entries or the user refers to numbered boxes.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'get_pointed_history', description: 'Get the last N pointer events from the event store — includes selections that have since been removed from the buffer. Use when the user says "the one before that" or refers to an earlier pick that\'s no longer in the current buffer.', inputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] } },
   { name: 'get_console_logs', description: 'Live console stream (log/info/warn/error/debug) captured from the iframe. Call this whenever the user mentions a bug, error, warning, broken behavior, unexpected output, or says "schau in die Konsole / check the console / was steht in der Konsole". Pass since_ms (typically 60000 for the last minute) to keep payloads small. Pass level="error" to filter for just errors.', inputSchema: { type: 'object', properties: { since_ms: { type: 'number' }, level: { type: 'string', enum: ['log', 'info', 'warn', 'error', 'debug'] } } } },
   { name: 'get_network_requests', description: 'Live network-request stream (fetch + XHR) from the iframe. Use when the user mentions a failed request, slow API call, wrong response, or says "check network / Netzwerk". Pass since_ms to limit the window.', inputSchema: { type: 'object', properties: { since_ms: { type: 'number' }, filter: { type: 'object' } } } },
   { name: 'get_dom_snapshot', description: 'Get DOM snapshot', inputSchema: { type: 'object', properties: { selector: { type: 'string' } } } },
@@ -33,16 +34,30 @@ left pane to "select" it for debugging.
 
 ## What happens when the user selects an element
 
-Every time the user Alt+clicks, two things happen:
+The user alt+shift-clicks elements (or alt+shift-drags regions) in the
+left pane. Every pick ACCUMULATES into a multi-select buffer shown as
+numbered chips above the terminal. Each pick has two server-side
+effects:
 
 1. The daemon auto-injects a context marker into the user's next prompt:
-     [markiert: <css-selector> · <pathname> · "<text preview>"]
-   This means the user does NOT have to say "this element" or paste a
-   selector — the selector is already inline in the message they send.
+     [markiert: #1=<sel>·<path> · "<text>" ; #2=<sel>·<path> · "<text>"]
+   With one pick the marker uses a single entry; with multiple picks
+   it lists all of them by their label (#1, #2, …). The user does NOT
+   have to say "this element" or paste a selector — the prefix is
+   already inline in the message they send.
 
 2. The element's full details (DOM, computed styles, screenshot, source-
    map location, ancestors) are buffered in the daemon and available
    through MCP tools.
+
+## Single vs multi selection
+
+- If the prefix has ONE [markiert: …] entry: call \`get_pointed_element\`.
+- If the prefix has MULTIPLE labels (#1, #2, …) OR the user refers to
+  them by number ("schau dir #1 und #3 an", "was ist der Unterschied
+  zwischen Box 1 und Box 2", "vergleich die Boxen"): call
+  \`get_pointed_elements\` to get all of them at once. The response
+  array's \`label\` field maps each payload to the user's reference.
 
 ## Your obligation on every user turn
 

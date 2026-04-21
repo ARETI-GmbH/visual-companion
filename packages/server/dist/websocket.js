@@ -7,6 +7,10 @@ export function registerCompanionWebSocket(app, opts) {
     app.get('/_companion/ws', { websocket: true }, (conn) => {
         const socket = conn.socket ?? conn;
         clients.add(socket);
+        try {
+            opts.onNewClient?.();
+        }
+        catch { /* notifier errors must not kill the socket */ }
         socket.on('message', (raw) => {
             try {
                 const incoming = JSON.parse(raw.toString());

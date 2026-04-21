@@ -8,15 +8,18 @@ export function attachNavigationHooks(dispatcher: Dispatcher, overlay?: Overlay)
     if (href === previousHref) return;
     const referrer = previousHref;
     previousHref = href;
-    // Drop the visual overlay — the selected element's DOM node is
-    // most likely detached now (SPA re-render) and the frame would
-    // render at stale coordinates / zero size. Server-side snapshot
-    // and the sticky pendingPrefix on the pty survive the nav, so
-    // claude's context is preserved; only the on-screen frame hides.
     if (overlay) {
-      overlay.hideSelected();
-      overlay.hideSelectedRegion();
+      // Clear transient frames and let setSelections reconcile the
+      // persistent buffer overlays against the new page. Re-attach
+      // on navigate-back is "free": same-page items' querySelectors
+      // resolve again, others stay hidden.
       overlay.hideHover();
+      // Give SPA frameworks a couple of microtasks to apply their DOM
+      // update before we querySelector — otherwise the first refresh
+      // runs on the outgoing page and the selector misses.
+      queueMicrotask(() => overlay.refresh());
+      setTimeout(() => overlay.refresh(), 0);
+      setTimeout(() => overlay.refresh(), 150);
     }
     dispatcher.send({
       type: 'navigation',
