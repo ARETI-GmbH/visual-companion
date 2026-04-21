@@ -126,55 +126,24 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
 }
 
 export function attachWebSocketProxy(
-  httpServer: { on: (evt: string, cb: (...args: any[]) => void) => void },
-  targetOrigin: string,
+  _httpServer: { on: (evt: string, cb: (...args: any[]) => void) => void },
+  _targetOrigin: string,
 ): void {
-  const target = new URL(targetOrigin);
-  const upstreamHost = target.hostname;
-  const upstreamPort = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
-
-  httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    // Pass everything except companion-specific WS endpoints upstream.
-    // The PTY bridge registers /_companion/pty and owns that upgrade.
-    if (!req.url) return;
-    if (req.url.startsWith('/_companion/') || req.url.startsWith('/window/')) return;
-    const upstreamPath = req.url;
-
-    // Same dual-stack story as the HTTP side — let net.connect try
-    // both IPv6 and IPv4 for "localhost" and use the first that
-    // answers, so HMR WebSockets work on either family.
-    const upstreamSocket = net.connect({
-      host: upstreamHost,
-      port: upstreamPort,
-      autoSelectFamily: true,
-      autoSelectFamilyAttemptTimeout: 500,
-    } as any, () => {
-      const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
-      headers.host = target.host;
-      const headerLines: string[] = [`${req.method} ${upstreamPath} HTTP/1.1`];
-      for (const [k, v] of Object.entries(headers)) {
-        if (v === undefined) continue;
-        if (Array.isArray(v)) {
-          for (const item of v) headerLines.push(`${k}: ${item}`);
-        } else {
-          headerLines.push(`${k}: ${v}`);
-        }
-      }
-      upstreamSocket.write(headerLines.join('\r\n') + '\r\n\r\n');
-      if (head && head.length > 0) upstreamSocket.write(head);
-      upstreamSocket.pipe(socket);
-      socket.pipe(upstreamSocket);
-    });
-
-    const cleanup = () => {
-      socket.destroy();
-      upstreamSocket.destroy();
-    };
-    upstreamSocket.on('error', cleanup);
-    socket.on('error', cleanup);
-    upstreamSocket.on('close', () => socket.destroy());
-    socket.on('close', () => upstreamSocket.destroy());
-  });
+  // WS forwarding disabled. Crashed Vite's HMR receiver with
+  //   RangeError: Invalid WebSocket frame: invalid status code 22418
+  // The crash took the whole dev server down, leaving the iframe with
+  // ECONNREFUSED on what looked like a running Vite. Two handlers —
+  // fastify-websocket (for /_companion/*) and ours (everything else)
+  // — were both firing on the http.Server 'upgrade' event and racing
+  // on the same socket. Until we replace this with a router that
+  // owns the upgrade event cleanly, it's safer not to forward WS at
+  // all.
+  //
+  // Trade-off: dev-server HMR doesn't run through the iframe. That's
+  // compensated by the file-watcher in index.ts which hard-reloads
+  // the iframe on source changes — same end result, slightly less
+  // snappy than true HMR.
+  return;
 }
 
 export function stripFrameAncestors(cspValue: string): string {

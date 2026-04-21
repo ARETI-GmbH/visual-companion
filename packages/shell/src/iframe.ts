@@ -95,9 +95,27 @@ export function initIframe(opts: IframeOptions): void {
 }
 
 function reload(iframe: HTMLIFrameElement, hard = false): void {
-  if (hard) {
-    iframe.src = iframe.src + (iframe.src.includes('?') ? '&' : '?') + '__vc_nocache=' + Date.now();
-  } else {
+  // Reload the iframe via its contentWindow — dev servers all send
+  // no-cache headers, so a normal reload is already "hard". The older
+  // __vc_nocache query-string trick stacked params on every Cmd+Shift+R
+  // ("?__vc_nocache=…&__vc_nocache=…&__vc_nocache=…") and confused
+  // client-side routers.
+  try {
+    iframe.contentWindow?.location.reload();
+    return;
+  } catch {
+    // Cross-origin (shouldn't happen through the proxy), fall through
+  }
+  // Fallback if contentWindow.reload isn't accessible. Strip any
+  // previously-stacked cache-buster params before re-assigning src.
+  try {
+    const u = new URL(iframe.src, window.location.origin);
+    for (const key of Array.from(u.searchParams.keys())) {
+      if (key === '__vc_nocache') u.searchParams.delete(key);
+    }
+    if (hard) u.searchParams.set('__vc_nocache', String(Date.now()));
+    iframe.src = u.pathname + (u.search ? u.search : '') + u.hash;
+  } catch {
     iframe.src = iframe.src;
   }
 }

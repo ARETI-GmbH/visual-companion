@@ -4,9 +4,9 @@ export interface ProxyOptions {
     injectScriptTag?: string;
 }
 export declare function registerProxy(app: FastifyInstance, opts: ProxyOptions): Promise<void>;
-export declare function attachWebSocketProxy(httpServer: {
+export declare function attachWebSocketProxy(_httpServer: {
     on: (evt: string, cb: (...args: any[]) => void) => void;
-}, targetOrigin: string): void;
+}, _targetOrigin: string): void;
 export declare function stripFrameAncestors(cspValue: string): string;
 /**
  * Rewrite a Location header so absolute upstream URLs are replaced with
