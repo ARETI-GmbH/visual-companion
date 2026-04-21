@@ -27,7 +27,7 @@ Das Script:
 
 Standardverhalten:
 - Die neue Claude-Session im Chrome-Window übernimmt die aktuelle Konversation (`claude --continue`).
-- Die äußere Terminal-Claude-Session wird nach dem Launch automatisch per SIGTERM geschlossen, damit du nicht zwei konkurrierende Sessions mit derselben History hast.
+- Die äußere Terminal-Claude-Session wird nach dem Launch automatisch per SIGTERM geschlossen (damit du nicht zwei konkurrierende Sessions mit derselben History hast). Das Terminal-Fenster **selbst** bleibt offen — du siehst den Shell-Prompt und kannst es mit Cmd+W schließen, falls du willst. Wir schließen das Fenster absichtlich nicht automatisch, weil dort ggf. auch `next dev` oder andere Prozesse laufen, die wir nicht mit-killen dürfen.
 
 Flags:
 - `--new` oder `--fresh`: Frische Claude-Session im Chrome-Window starten und die alte Terminal-Session **offen lassen** (z.B. wenn du parallel arbeiten willst).
