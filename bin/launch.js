@@ -372,16 +372,16 @@ function findTerminalAppForTty(tty) {
     end try
   `;
   for (const script of [terminalAppProbe, iTermProbe]) {
-    try {
-      const out = execSync(`osascript -e ${JSON.stringify(script)}`, {
-        timeout: 3000,
-        encoding: 'utf8',
-      }).trim();
-      if (out === 'Terminal' || out === 'iTerm') return out;
-    } catch (err) {
-      // Keep trying — most common cause is the app not being installed
-      // or the user denying the automation prompt the first time.
-    }
+    // spawnSync with argv, NOT execSync-with-interpolation — shell
+    // double-quoting collapses literal newlines inside the script
+    // into the 2-character sequence "\n", which osascript rejects
+    // with "0:1: syntax error, -2740". Array-arg bypass fixes it.
+    const res = spawnSync('osascript', ['-e', script], {
+      timeout: 3000,
+      encoding: 'utf8',
+    });
+    const out = (res.stdout || '').trim();
+    if (out === 'Terminal' || out === 'iTerm') return out;
   }
   return null;
 }
@@ -434,19 +434,17 @@ function closeTerminalTabByTty(tty, app) {
   } else {
     return;
   }
-  try {
-    const out = execSync(`osascript -e ${JSON.stringify(script)}`, {
-      timeout: 3000,
-      encoding: 'utf8',
-    }).trim();
-    console.log(
-      `visual-companion: close ${app} tty=${tty} → ${out === 'closed' ? 'closed' : 'no-match-or-denied'}`,
-    );
-  } catch (err) {
-    console.log(
-      `visual-companion: close ${app} tty=${tty} → error: ${(err && err.message) || err}`,
-    );
-  }
+  const res = spawnSync('osascript', ['-e', script], {
+    timeout: 3000,
+    encoding: 'utf8',
+  });
+  const out = (res.stdout || '').trim();
+  const err = (res.stderr || '').trim();
+  console.log(
+    `visual-companion: close ${app} tty=${tty} → ${
+      out === 'closed' ? 'closed' : err ? 'error: ' + err : 'no-match'
+    }`,
+  );
 }
 
 function findOuterClaudePid() {

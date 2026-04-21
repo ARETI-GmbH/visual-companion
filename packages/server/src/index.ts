@@ -230,13 +230,13 @@ main().catch((err) => {
  * want to reload on (node_modules, build output, version control) are
  * filtered by filename regex — cheaper and enough for our use.
  */
-const IGNORE = /(^|[\/\\])(node_modules|\.git|\.next|\.nuxt|\.vite|\.turbo|\.cache|\.parcel-cache|\.svelte-kit|\.astro|\.remix|\.rollup\.cache|\.DS_Store|dist|build|out|coverage|tmp)([\/\\]|$)/;
+const IGNORE = /(^|[\/\\])(node_modules|\.git|\.next|\.nuxt|\.vite|\.turbo|\.cache|\.parcel-cache|\.svelte-kit|\.astro|\.remix|\.rollup\.cache|\.playwright-mcp|\.playwright|playwright-report|test-results|\.DS_Store|dist|build|out|coverage|tmp)([\/\\]|$)/;
 const IGNORE_TAIL = /(\.swp|\.swx|~|\.tmp|\.log|\.lock|\.tsbuildinfo)$/;
 // Even if the ignore list misses something, never broadcast reloads
 // more frequently than this window — kills the "dev server writes
 // cache → watcher fires → reload → dev server rebuilds → writes cache
 // → reload" loop that crashed Vite's HMR in user reports.
-const MIN_RELOAD_INTERVAL_MS = 5000;
+const MIN_RELOAD_INTERVAL_MS = 10000;
 
 /**
  * Open a new terminal window in `cwd` and start `claude --continue`.
