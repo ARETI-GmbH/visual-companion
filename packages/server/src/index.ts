@@ -18,6 +18,7 @@ async function main(): Promise<void> {
     await app.register(fastifyStatic, {
       root: cfg.shellDir,
       prefix: '/window/',
+      index: ['window.html'],
     });
   }
 

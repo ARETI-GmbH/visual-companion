@@ -2,11 +2,41 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Visual Companion</title>
   <link rel="stylesheet" href="./window.css">
+  <link rel="stylesheet" href="./xterm.css">
 </head>
 <body>
-  <div id="app">Visual Companion placeholder</div>
+  <header class="titlebar">
+    <div class="traffic-lights"></div>
+    <div class="title">Visual Companion</div>
+    <div class="url-input-wrap"><input id="url-input" type="text" spellcheck="false"></div>
+    <div class="actions">
+      <button id="btn-reload" title="Reload (⌘R)">↻</button>
+      <button id="btn-devtools" title="DevTools (⌘⌥I)">&lt;/&gt;</button>
+      <button id="btn-settings" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="pane pane-left">
+      <iframe id="app-frame" src="/app/" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+      <div class="pill hint">⌥ halten zum Zeigen</div>
+      <div class="pill status" id="proxy-status">● Proxy verbunden</div>
+    </section>
+    <div class="divider" id="divider"></div>
+    <section class="pane pane-right">
+      <div id="terminal"></div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="st-proxy">Proxy: — → —</span>
+    <span id="st-events">Events: 0</span>
+    <span id="st-mcp">MCP: —</span>
+  </footer>
+
   <script type="module" src="./window.js"></script>
 </body>
 </html>
