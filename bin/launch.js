@@ -139,7 +139,10 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
     if (m) {
       const port = m[1];
       launchChrome(port, server.pid, url);
+      // Close the parent's end of the pipe so the daemon won't block on
+      // future stdout writes. The daemon handles EPIPE gracefully.
       server.stdout.removeAllListeners('data');
+      try { server.stdout.destroy(); } catch {}
       server.unref();
       setTimeout(() => process.exit(0), 200);
     }

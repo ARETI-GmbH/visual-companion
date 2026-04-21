@@ -11,7 +11,20 @@ import { registerPtyBridge } from './pty-bridge.js';
 import { registerMcpHandlers } from './mcp-handlers.js';
 async function main() {
     const cfg = getConfigFromEnv();
-    const app = Fastify({ logger: { level: 'info' } });
+    const app = Fastify({ logger: { level: 'error' } });
+    // After launch.js detaches, our parent's stdout pipe is closed. Any
+    // subsequent stdout write would throw EPIPE — swallow it so the daemon
+    // keeps running silently for the window's lifetime.
+    process.stdout.on('error', (err) => {
+        if (err.code === 'EPIPE')
+            return;
+        throw err;
+    });
+    process.stderr.on('error', (err) => {
+        if (err.code === 'EPIPE')
+            return;
+        throw err;
+    });
     await app.register(fastifyWebsocket);
     if (cfg.shellDir) {
         await app.register(fastifyStatic, {

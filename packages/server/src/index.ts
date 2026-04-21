@@ -12,7 +12,19 @@ import { registerMcpHandlers } from './mcp-handlers.js';
 
 async function main(): Promise<void> {
   const cfg = getConfigFromEnv();
-  const app = Fastify({ logger: { level: 'info' } });
+  const app = Fastify({ logger: { level: 'error' } });
+
+  // After launch.js detaches, our parent's stdout pipe is closed. Any
+  // subsequent stdout write would throw EPIPE — swallow it so the daemon
+  // keeps running silently for the window's lifetime.
+  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+  });
+  process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+  });
   await app.register(fastifyWebsocket);
 
   if (cfg.shellDir) {

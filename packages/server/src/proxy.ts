@@ -9,7 +9,11 @@ export interface ProxyOptions {
   injectScriptTag?: string; // will be inserted before </head>
 }
 
-const STRIPPED_RESPONSE_HEADERS = new Set(['x-frame-options', 'content-length']);
+const STRIPPED_RESPONSE_HEADERS = new Set([
+  'x-frame-options',
+  'content-length',
+  'transfer-encoding',
+]);
 
 export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): Promise<void> {
   const { targetOrigin } = opts;
@@ -32,20 +36,38 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
       body: req.raw,
     });
 
+    const ctype = upstreamResp.headers['content-type'];
+    const isHtml = typeof ctype === 'string' && ctype.includes('text/html');
+
     for (const [key, value] of Object.entries(upstreamResp.headers)) {
       const lower = key.toLowerCase();
       if (STRIPPED_RESPONSE_HEADERS.has(lower)) continue;
+      // Strip content-encoding on the HTML-injection path: we're about to
+      // serve the decoded text, so leaving 'gzip' etc. on would make the
+      // browser double-decode and fail.
+      if (lower === 'content-encoding' && isHtml && opts.injectScriptTag) continue;
       if (lower === 'content-security-policy' || lower === 'content-security-policy-report-only') {
         const filtered = stripFrameAncestors(Array.isArray(value) ? value.join(', ') : String(value));
         if (filtered) reply.header(key, filtered);
+        continue;
+      }
+      if (lower === 'location') {
+        const rewritten = rewriteLocation(
+          Array.isArray(value) ? value.join(', ') : String(value),
+          targetOrigin,
+        );
+        reply.header('location', rewritten);
+        continue;
+      }
+      if (lower === 'set-cookie') {
+        const cookies = Array.isArray(value) ? value : [String(value)];
+        reply.header('set-cookie', cookies.map(rewriteCookiePath));
         continue;
       }
       reply.header(key, value as string);
     }
     reply.status(upstreamResp.statusCode);
 
-    const ctype = upstreamResp.headers['content-type'];
-    const isHtml = typeof ctype === 'string' && ctype.includes('text/html');
     if (isHtml && opts.injectScriptTag) {
       const body = await upstreamResp.body.text();
       const injected = injectScript(body, opts.injectScriptTag);
@@ -108,6 +130,45 @@ export function stripFrameAncestors(cspValue: string): string {
     .map((part) => part.trim())
     .filter((part) => part.length > 0 && !/^frame-ancestors\b/i.test(part))
     .join('; ');
+}
+
+/**
+ * Rewrite a Location header so that same-origin redirects stay inside
+ * the /app proxy. External redirects are passed through unchanged.
+ *
+ *   "/de"                          → "/app/de"
+ *   "http://localhost:3000/de"     → "/app/de"   (if targetOrigin matches)
+ *   "https://auth.example.com/..." → unchanged   (external)
+ */
+export function rewriteLocation(loc: string, targetOrigin: string): string {
+  if (!loc) return loc;
+  try {
+    const target = new URL(targetOrigin);
+    const resolved = new URL(loc, target);
+    if (resolved.origin === target.origin) {
+      return '/app' + resolved.pathname + resolved.search + resolved.hash;
+    }
+    return loc;
+  } catch {
+    return loc;
+  }
+}
+
+/**
+ * Rewrite a Set-Cookie's Path attribute so cookies scoped to upstream paths
+ * are sent back for the matching /app-prefixed paths the iframe uses.
+ *
+ *   "sid=x; Path=/api; HttpOnly" → "sid=x; Path=/app/api; HttpOnly"
+ *   "sid=x; Path=/"              → "sid=x; Path=/app/"
+ *   "sid=x" (no Path)            → unchanged
+ */
+export function rewriteCookiePath(cookie: string): string {
+  return cookie.replace(/;\s*Path=([^;]*)/i, (_m, rawPath: string) => {
+    const path = rawPath.trim();
+    if (path === '' || path === '/') return '; Path=/app/';
+    if (path.startsWith('/')) return '; Path=/app' + path;
+    return '; Path=' + path;
+  });
 }
 
 export function injectScript(html: string, scriptTag: string): string {

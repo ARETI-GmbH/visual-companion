@@ -21,6 +21,8 @@ export function initTerminal(opts: { container: HTMLElement }): void {
   term.loadAddon(new WebLinksAddon());
   term.open(opts.container);
   fitAddon.fit();
+  term.focus();
+  opts.container.addEventListener('click', () => term.focus());
 
   const ws = new WebSocket(`ws://${window.location.host}/_companion/pty`);
   ws.addEventListener('open', () => {
