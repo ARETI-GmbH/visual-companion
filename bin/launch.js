@@ -54,6 +54,11 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
     }
   }
 
+  // node-pty 1.x ships its darwin/linux `spawn-helper` without the exec bit in
+  // some install paths (plugin cache, repos synced via tools that strip modes).
+  // Without +x, posix_spawnp fails for every child — including claude itself.
+  ensureSpawnHelperExecutable(nodeModulesDir);
+
   // 2. Resolve URL
   let explicitUrl = argv.find((a) => !a.startsWith('--'));
   let hintedUrl = explicitUrl || autoDetectUrl(cwd); // best-effort guess
@@ -297,6 +302,28 @@ function startDevServer(cwd, devCommand) {
   });
   devServer.unref();
   return { pid: devServer.pid };
+}
+
+/**
+ * Ensure node-pty's `spawn-helper` prebuilt binary has the exec bit set.
+ * Silently skipped on Windows or if the file is missing.
+ */
+function ensureSpawnHelperExecutable(nodeModulesRoot) {
+  const candidates = [
+    path.join(nodeModulesRoot, 'node-pty/prebuilds/darwin-arm64/spawn-helper'),
+    path.join(nodeModulesRoot, 'node-pty/prebuilds/darwin-x64/spawn-helper'),
+    path.join(nodeModulesRoot, 'node-pty/build/Release/spawn-helper'),
+  ];
+  for (const p of candidates) {
+    try {
+      const st = fs.statSync(p);
+      if (!(st.mode & 0o111)) {
+        fs.chmodSync(p, st.mode | 0o755);
+      }
+    } catch {
+      // missing or not our platform — skip
+    }
+  }
 }
 
 /**
