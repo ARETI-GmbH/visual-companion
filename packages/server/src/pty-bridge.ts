@@ -104,9 +104,22 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       bufferValid = true;
       return;
     }
+    if (data.length >= 3 && data.charCodeAt(0) === 0x1b && data[1] === '[') {
+      // CSI escape sequence. Claude Code enables focus tracking and
+      // mouse reporting, which means the xterm client sends us things
+      // like \x1b[I (focus gained) or \x1b[<0;13;7M (SGR mouse) while
+      // the user is just clicking around panes. Those events don't
+      // move claude's input cursor, so we ignore them. Sequences that
+      // DO move the cursor (arrow keys) still invalidate the buffer.
+      const body = data.slice(2);
+      if (body === 'I' || body === 'O') return; // focus in/out
+      if (/^<?[\d;]*[Mm]$/.test(body)) return;  // SGR mouse report
+      if (/^200~/.test(body) || /^201~/.test(body)) return; // paste wrap
+      bufferValid = false;
+      return;
+    }
     if (data.charCodeAt(0) === 0x1b) {
-      // Escape sequence (arrow keys, function keys, mouse reports, …).
-      // Claude's buffer may no longer match ours; bail out of tracking.
+      // Bare ESC or Alt+char — can't track.
       bufferValid = false;
       return;
     }
@@ -115,10 +128,12 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       return;
     }
     if (data.length > 1) {
-      // Multi-byte chunk — paste, UTF-8 sequence, or wrapped typing.
-      // Strip controls and append the rest; still best-effort.
-      const stripped = data.replace(/[\x00-\x1f\x7f]/g, '');
-      if (stripped !== data) bufferValid = false;
+      // Multi-byte chunk — paste, UTF-8 sequence, wrapped typing, or
+      // a burst that includes an escape sequence at the boundary.
+      // Strip known harmless CSI fragments, then controls; what's left
+      // is the user's printable intent.
+      const withoutCsi = data.replace(/\x1b\[[\d;<>?]*[A-Za-z~]/g, '');
+      const stripped = withoutCsi.replace(/[\x00-\x1f\x7f]/g, '');
       userBuffer += stripped;
       return;
     }
@@ -127,9 +142,19 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
   }
 
   function commitWithPrefix(pty: IPty): boolean {
-    if (!pendingPrefix || !bufferValid || userBuffer.length === 0) return false;
-    // Backspace over whatever the user typed, then retype prefix+text
-    // and send Enter as a single write so claude sees it as one edit.
+    const reason =
+      !pendingPrefix ? 'no-prefix' :
+      !bufferValid ? 'buffer-invalid' :
+      userBuffer.length === 0 ? 'empty-buffer' : null;
+    if (reason) {
+      process.stderr.write(
+        `[vc] commit skipped: ${reason} (prefix=${!!pendingPrefix} valid=${bufferValid} buf=${userBuffer.length})\n`,
+      );
+      return false;
+    }
+    process.stderr.write(
+      `[vc] commit with prefix: buf.len=${userBuffer.length} prefix.len=${pendingPrefix!.length}\n`,
+    );
     const deletion = '\x7f'.repeat(userBuffer.length);
     pty.write(deletion + pendingPrefix + userBuffer + '\r');
     userBuffer = '';
@@ -252,6 +277,7 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     },
     setPendingPrefix(text: string) {
       pendingPrefix = text;
+      process.stderr.write(`[vc] setPendingPrefix: len=${text.length}\n`);
     },
     onTerminalInput(handler) {
       inputListeners.add(handler);
