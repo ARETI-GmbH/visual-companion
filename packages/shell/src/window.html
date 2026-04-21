@@ -10,13 +10,10 @@
 <body>
   <header class="titlebar">
     <div class="traffic-lights"></div>
-    <div class="title">Visual Companion</div>
+    <button id="btn-reload" class="nav-btn" title="Reload (⌘R)" aria-label="Reload">↻</button>
     <div class="url-input-wrap"><input id="url-input" type="text" spellcheck="false"></div>
-    <div class="actions">
-      <button id="btn-reload" title="Reload (⌘R)">↻</button>
-      <button id="btn-devtools" title="DevTools (⌘⌥I)">&lt;/&gt;</button>
-      <button id="btn-settings" title="Settings">⚙</button>
-    </div>
+    <button id="btn-devtools" class="nav-btn" title="DevTools (rechtsklick → Inspect)" aria-label="DevTools">&lt;/&gt;</button>
+    <button id="btn-settings" class="nav-btn" title="Settings" aria-label="Settings">⚙</button>
   </header>
 
   <main class="main">
@@ -28,7 +25,6 @@
     <div class="divider" id="divider"></div>
     <section class="pane pane-right">
       <div id="terminal"></div>
-      <div id="selection-badge" class="selection-badge" style="display:none"></div>
     </section>
   </main>
 

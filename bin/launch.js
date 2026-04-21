@@ -203,21 +203,30 @@ const DEV_STDOUT_BUFFER = { text: '' };
         // windows running against the same session. Default behavior
         // unless /visual-companion --new was used.
         //
-        // NB: we deliberately do NOT touch the terminal window itself.
-        // AppleScript "close front window" can close the wrong window
-        // (user may have switched apps in the meantime) and — worse —
-        // if the outer terminal also runs `next dev`, a background
-        // process, or anything else alongside claude, closing the
-        // window kills all of it. The SIGTERM below only kills claude;
-        // the shell prompt remains and the user hits Cmd+W if they
-        // want the window gone.
+        // We also try to close the exact terminal tab/window the user
+        // launched us from — matched by TTY so we never touch the
+        // wrong one. If the user's terminal app isn't scriptable
+        // (Terminal.app and iTerm2 are), the SIGTERM still lands and
+        // the window drops back to a shell prompt for manual Cmd+W.
         if (shouldCloseOuterClaude) {
           const outerPid = findOuterClaudePid();
+          const ownTty = findOwnTty();
+          const termApp = ownTty ? findTerminalAppForTty(ownTty) : null;
           if (outerPid) {
             console.log(
-              `visual-companion: closing outer claude (pid ${outerPid}) — the terminal window stays open (Cmd+W to close manually).`,
+              `visual-companion: closing outer claude (pid ${outerPid})${termApp ? ` + ${termApp} tab ${ownTty}` : ''}.`,
             );
             try { process.kill(outerPid, 'SIGTERM'); } catch {}
+          }
+          // Small delay so claude exits cleanly and leaves just the
+          // shell in the tab — then the terminal app won't prompt
+          // "running processes" when we close the window.
+          if (termApp) {
+            setTimeout(() => {
+              try { closeTerminalTabByTty(ownTty, termApp); } catch {}
+              process.exit(0);
+            }, 300);
+            return;
           }
         }
         process.exit(0);
@@ -242,6 +251,125 @@ const DEV_STDOUT_BUFFER = { text: '' };
  * → bash subshell → node launch.js chain). Walks up the process tree until
  * we find a binary called `claude`; returns 0 if nothing matching is found.
  */
+/**
+ * Find the TTY path of the terminal tab that launched us
+ * (e.g. "/dev/ttys003"). Used to target exactly that tab for close.
+ * Returns null if we can't determine it (non-macOS, detached shells, …).
+ */
+function findOwnTty() {
+  try {
+    // launch.js's parent is bash (the slash-command subshell). Its tty
+    // is the terminal tab's tty.
+    const bashPid = process.ppid;
+    const tty = execSync(`ps -o tty= -p ${bashPid}`, {
+      encoding: 'utf8',
+      timeout: 1500,
+    }).trim();
+    if (!tty || tty === '??' || tty === '?') return null;
+    return '/dev/' + tty;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which terminal app owns the tab with this tty? Returns 'Terminal',
+ * 'iTerm', or null. We probe Terminal.app and iTerm2 — other apps
+ * (Warp, Ghostty, kitty, Alacritty, …) aren't AppleScript-controllable
+ * this way, so we give up silently and fall back to "user Cmd+W".
+ */
+function findTerminalAppForTty(tty) {
+  if (process.platform !== 'darwin') return null;
+  const terminalAppProbe = `
+    tell application "System Events"
+      if not ((name of processes) contains "Terminal") then return ""
+    end tell
+    tell application "Terminal"
+      repeat with w in windows
+        repeat with t in tabs of w
+          if tty of t is "${tty}" then return "Terminal"
+        end repeat
+      end repeat
+    end tell
+    return ""
+  `;
+  const iTermProbe = `
+    tell application "System Events"
+      if not ((name of processes) contains "iTerm2") then return ""
+    end tell
+    tell application "iTerm"
+      repeat with w in windows
+        repeat with tb in tabs of w
+          tell current session of tb
+            if tty is "${tty}" then return "iTerm"
+          end tell
+        end repeat
+      end repeat
+    end tell
+    return ""
+  `;
+  for (const script of [terminalAppProbe, iTermProbe]) {
+    try {
+      const out = execSync(`osascript -e ${JSON.stringify(script)}`, {
+        timeout: 2000,
+        encoding: 'utf8',
+      }).trim();
+      if (out === 'Terminal' || out === 'iTerm') return out;
+    } catch {
+      // app not running or not scriptable
+    }
+  }
+  return null;
+}
+
+/**
+ * Close the tab/window identified by (tty, app). Only touches that one
+ * window — every other window of every other app stays untouched.
+ */
+function closeTerminalTabByTty(tty, app) {
+  if (process.platform !== 'darwin') return;
+  let script = '';
+  if (app === 'Terminal') {
+    script = `
+      tell application "Terminal"
+        repeat with w in windows
+          repeat with t in tabs of w
+            if tty of t is "${tty}" then
+              close w saving no
+              return
+            end if
+          end repeat
+        end repeat
+      end tell
+    `;
+  } else if (app === 'iTerm') {
+    script = `
+      tell application "iTerm"
+        repeat with w in windows
+          repeat with tb in tabs of w
+            tell current session of tb
+              if tty is "${tty}" then
+                close w
+                return
+              end if
+            end tell
+          end repeat
+        end repeat
+      end tell
+    `;
+  } else {
+    return;
+  }
+  try {
+    execSync(`osascript -e ${JSON.stringify(script)}`, {
+      timeout: 2500,
+      stdio: 'ignore',
+    });
+  } catch {
+    // best-effort
+  }
+}
+
 function findOuterClaudePid() {
   try {
     // process.ppid is the bash subshell. Walk up twice to be robust to
