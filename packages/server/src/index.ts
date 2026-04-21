@@ -7,6 +7,7 @@ import { registerProxy } from './proxy.js';
 import { registerCompanionWebSocket } from './websocket.js';
 import { EventStore } from './event-store.js';
 import { ScreenshotCache } from './screenshot-cache.js';
+import { registerPtyBridge } from './pty-bridge.js';
 
 async function main(): Promise<void> {
   const cfg = getConfigFromEnv();
@@ -36,6 +37,17 @@ async function main(): Promise<void> {
 
   app.get('/', (_req, reply) => reply.redirect('/window/'));
   app.get('/_companion/health', async () => ({ ok: true, events: store.size() }));
+
+  // Register PTY bridge route before listen (Fastify v4 forbids adding
+  // routes after the server is listening). companionPort is resolved
+  // lazily at spawn time so we can pass the actual listening port.
+  let resolvedPort = cfg.port;
+  const pty = registerPtyBridge(app, {
+    cwd: cfg.cwd,
+    companionPort: () => resolvedPort,
+  });
+  // silence unused var until Phase 9 uses it
+  void pty;
 
   // Profile dir for potential cleanup later
   const profileDir = `/tmp/visual-companion-${process.pid}`;
@@ -78,8 +90,9 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdown);
 
   const address = await app.listen({ port: cfg.port, host: '127.0.0.1' });
+  resolvedPort = parseInt(new URL(address).port, 10);
   // CRITICAL: DO NOT CHANGE FORMAT — launch.js parses this exact line
-  console.log(`READY port=${new URL(address).port}`);
+  console.log(`READY port=${resolvedPort}`);
 
   // silence unused vars
   void screenshots;
