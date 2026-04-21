@@ -49,6 +49,7 @@ function sendData(socket, data) {
     }
 }
 export function registerPtyBridge(app, opts) {
+    let currentPty = null;
     let currentSocket = null;
     const inputListeners = new Set();
     app.get('/_companion/pty', { websocket: true }, (conn) => {
@@ -90,6 +91,7 @@ export function registerPtyBridge(app, opts) {
             socket.close();
             return;
         }
+        currentPty = pty;
         pty.onData((data) => sendData(socket, data));
         pty.onExit(({ exitCode, signal }) => {
             sendData(socket, `\r\n\x1b[90m[visual-companion] claude exited (code ${exitCode}${signal ? `, signal ${signal}` : ''})\x1b[0m\r\n`);
@@ -119,18 +121,26 @@ export function registerPtyBridge(app, opts) {
             catch { }
             if (currentSocket === socket)
                 currentSocket = null;
+            if (currentPty === pty)
+                currentPty = null;
         });
     });
     return {
         // Render text in the xterm display on the right pane. Goes via the
-        // same WebSocket the PTY streams claude's stdout on, so claude sees
-        // it in the scrollback exactly as if it were its own output — but
-        // we do NOT write to claude's stdin, which would make ANSI sequences
-        // get parsed as keystrokes and vanish silently.
+        // WebSocket that streams claude's stdout — we do NOT write to
+        // claude's stdin, which would make ANSI sequences get parsed as
+        // keystrokes and vanish silently.
         writeToTerminal(text) {
             if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
                 currentSocket.send(JSON.stringify({ type: 'data', data: text }));
             }
+        },
+        // Type text into claude's stdin as if the user were typing. Lands
+        // in claude's prompt line; the user can append their question
+        // afterwards and hit Enter.
+        injectInput(text) {
+            if (currentPty)
+                currentPty.write(text);
         },
         onTerminalInput(handler) {
             inputListeners.add(handler);

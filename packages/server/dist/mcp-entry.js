@@ -22,7 +22,59 @@ const TOOLS = [
     { name: 'reload', description: 'Reload iframe', inputSchema: { type: 'object', properties: {} } },
     { name: 'evaluate_in_page', description: 'Run JS in iframe (requires user confirmation in terminal)', inputSchema: { type: 'object', properties: { expression: { type: 'string' } }, required: ['expression'] } },
 ];
-const server = new Server({ name: 'visual-companion-mcp', version: '0.1.0' }, { capabilities: { tools: {} } });
+const VC_INSTRUCTIONS = `
+Visual Companion is a split-pane development environment: a Chrome window
+with the user's web app on the left and this Claude session on the right.
+The user can Alt+Click (or Alt+drag for regions) on any element in the
+left pane to "select" it for debugging.
+
+## What happens when the user selects an element
+
+Every time the user Alt+clicks, two things happen:
+
+1. The daemon auto-injects a context marker into the user's next prompt:
+     [markiert: <css-selector> · <pathname> · "<text preview>"]
+   This means the user does NOT have to say "this element" or paste a
+   selector — the selector is already inline in the message they send.
+
+2. The element's full details (DOM, computed styles, screenshot, source-
+   map location, ancestors) are buffered in the daemon and available
+   through MCP tools.
+
+## Your obligation on every user turn
+
+Whenever the user's message contains a "[markiert: ...]" prefix (or they
+refer to "hier", "das hier", "this element", "the box", "das markierte",
+"this thing", "diese Box" etc.), you MUST call \`get_pointed_element\`
+before answering. The selector in the prefix is a hint; the tool call
+gives you the actual styles, screenshot, and source file location — that
+is what the user installed Visual Companion to get.
+
+Do NOT answer "which element?" or "I don't see a selection" — the
+selection is in the prefix you just received, and \`get_pointed_element\`
+will confirm it.
+
+## Common tools (full list via ListTools)
+
+- get_pointed_element    — last Alt-clicked element, full context
+- get_pointed_history    — last N selections
+- get_computed_styles    — styles for any CSS selector
+- get_source_location    — source-map file:line for a selector
+- take_screenshot        — element or full page
+- get_console_logs       — live console from the pane
+- get_network_requests   — live network from the pane
+- highlight_element      — pulse a selector in the browser (great for
+                           confirming you're looking at the right thing)
+- navigate_to / reload   — move the iframe
+
+## Editing the app
+
+The user's project is this session's cwd. When the user asks to change
+something they selected, you already know (from get_pointed_element's
+sourceLocation) which file to edit — edit it directly; Turbopack/HMR
+will hot-reload the pane.
+`.trim();
+const server = new Server({ name: 'visual-companion-mcp', version: '0.1.0' }, { capabilities: { tools: {} }, instructions: VC_INSTRUCTIONS });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
     if (!client) {

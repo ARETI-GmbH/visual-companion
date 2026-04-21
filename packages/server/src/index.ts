@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   const store = new EventStore({ maxEvents: 5000, maxAgeMs: 5 * 60 * 1000 });
   const screenshots = new ScreenshotCache(100);
   let gatewayRef: { broadcast(msg: any): void } | null = null;
+  let ptyBridgeRef: { injectInput(text: string): void } | null = null;
   const gateway = registerCompanionWebSocket(app, {
     store,
     onEvent: (ev) => {
@@ -56,11 +57,7 @@ async function main(): Promise<void> {
       const preview = p.textContent
         ? p.textContent.replace(/\s+/g, ' ').slice(0, 80).trim()
         : '';
-      // Broadcast a selection update to every connected companion ws
-      // client. The shell will render it as a sidebar badge; inject.js
-      // will ignore unknown types silently. We intentionally do NOT
-      // write this into the PTY — claude's TUI owns the xterm and any
-      // cross-talk shifts its prompt out of place.
+      // 1) Show the sidebar badge so the user gets visual feedback.
       gatewayRef?.broadcast({
         type: 'selection-update',
         selector: p.cssSelector,
@@ -70,6 +67,17 @@ async function main(): Promise<void> {
         height: Math.round(p.boundingBox.height),
         text: preview,
       });
+
+      // 2) Auto-inject a short context prefix straight into claude's
+      //    prompt line. Then the user just types their question and hits
+      //    Enter — claude's next turn receives the selection inline as
+      //    part of the user message, so it understands exactly what
+      //    "hier", "das hier", or "dieses Element" refers to, without
+      //    needing the user to phrase the question carefully.
+      const snippet = preview
+        ? `[markiert: ${p.cssSelector} · ${pathname || '/'} · "${preview}"] `
+        : `[markiert: ${p.cssSelector} · ${pathname || '/'}] `;
+      ptyBridgeRef?.injectInput(snippet);
     },
   });
   gatewayRef = gateway;
@@ -89,6 +97,24 @@ async function main(): Promise<void> {
   // shell is addressed explicitly via /window/.
   app.get('/_companion/health', async () => ({ ok: true, events: store.size() }));
 
+  // Used by the shell's selection badge "send to claude" button. POSTs
+  // a plain-text snippet which we type into claude's prompt line as
+  // if the user had typed it. Claude's LLM then sees the context and
+  // can run get_pointed_element for full detail.
+  app.post('/_companion/pty/inject', async (req, reply) => {
+    const body = (req.body ?? {}) as { text?: unknown };
+    if (typeof body.text !== 'string' || body.text.length === 0) {
+      reply.status(400);
+      return { ok: false, error: 'text must be a non-empty string' };
+    }
+    if (body.text.length > 2000) {
+      reply.status(400);
+      return { ok: false, error: 'text too long (max 2000)' };
+    }
+    ptyBridgeRef?.injectInput(body.text);
+    return { ok: true };
+  });
+
   // Register PTY bridge route before listen (Fastify v4 forbids adding
   // routes after the server is listening). companionPort is resolved
   // lazily at spawn time so we can pass the actual listening port.
@@ -98,6 +124,7 @@ async function main(): Promise<void> {
     companionPort: () => resolvedPort,
     claudeArgs: cfg.claudeArgs,
   });
+  ptyBridgeRef = pty;
 
   registerMcpHandlers(app, { store, gateway, pty });
 

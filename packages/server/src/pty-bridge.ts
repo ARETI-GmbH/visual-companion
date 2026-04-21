@@ -12,7 +12,12 @@ export interface PtyBridgeOptions {
 }
 
 export interface PtyBridgeControl {
+  /** Push `text` to the xterm display (visible to the user). Does NOT
+   *  reach claude's stdin; use for status lines / notifications. */
   writeToTerminal(text: string): void;
+  /** Type `text` into claude's stdin as if the user typed it. Use for
+   *  quick-injecting selected-element context into the prompt line. */
+  injectInput(text: string): void;
   onTerminalInput(handler: (data: string) => void): () => void;
 }
 
@@ -63,6 +68,7 @@ function sendData(socket: WebSocket, data: string): void {
 }
 
 export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions): PtyBridgeControl {
+  let currentPty: IPty | null = null;
   let currentSocket: WebSocket | null = null;
   const inputListeners = new Set<(d: string) => void>();
 
@@ -119,6 +125,7 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       socket.close();
       return;
     }
+    currentPty = pty;
 
     pty.onData((data) => sendData(socket, data));
     pty.onExit(({ exitCode, signal }) => {
@@ -146,19 +153,25 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     socket.on('close', () => {
       try { pty.kill(); } catch {}
       if (currentSocket === socket) currentSocket = null;
+      if (currentPty === pty) currentPty = null;
     });
   });
 
   return {
     // Render text in the xterm display on the right pane. Goes via the
-    // same WebSocket the PTY streams claude's stdout on, so claude sees
-    // it in the scrollback exactly as if it were its own output — but
-    // we do NOT write to claude's stdin, which would make ANSI sequences
-    // get parsed as keystrokes and vanish silently.
+    // WebSocket that streams claude's stdout — we do NOT write to
+    // claude's stdin, which would make ANSI sequences get parsed as
+    // keystrokes and vanish silently.
     writeToTerminal(text: string) {
       if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
         currentSocket.send(JSON.stringify({ type: 'data', data: text }));
       }
+    },
+    // Type text into claude's stdin as if the user were typing. Lands
+    // in claude's prompt line; the user can append their question
+    // afterwards and hit Enter.
+    injectInput(text: string) {
+      if (currentPty) currentPty.write(text);
     },
     onTerminalInput(handler) {
       inputListeners.add(handler);
