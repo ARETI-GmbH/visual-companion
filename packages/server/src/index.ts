@@ -8,6 +8,7 @@ import { registerCompanionWebSocket } from './websocket.js';
 import { EventStore } from './event-store.js';
 import { ScreenshotCache } from './screenshot-cache.js';
 import { registerPtyBridge } from './pty-bridge.js';
+import { registerMcpHandlers } from './mcp-handlers.js';
 
 async function main(): Promise<void> {
   const cfg = getConfigFromEnv();
@@ -47,8 +48,8 @@ async function main(): Promise<void> {
     cwd: cfg.cwd,
     companionPort: () => resolvedPort,
   });
-  // silence unused var until Phase 9 uses it
-  void pty;
+
+  registerMcpHandlers(app, { store, gateway, pty });
 
   // Profile dir for potential cleanup later
   const profileDir = `/tmp/visual-companion-${process.pid}`;
