@@ -42,6 +42,6 @@ if (document.body) {
   });
 }
 
-attachNavigationHooks(dispatcher);
+attachNavigationHooks(dispatcher, overlay);
 
 (window as any).__visualCompanion = { dispatcher, overlay };

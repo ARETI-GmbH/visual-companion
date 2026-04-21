@@ -21,9 +21,13 @@ export interface PtyBridgeControl {
   /** Queue a context prefix to be silently prepended to the user's next
    *  prompt. At Enter time the bridge rewrites the line so claude sees
    *  "prefix + user text" as a single message — without the prefix ever
-   *  appearing in the user's prompt line. Replaces any previous pending
-   *  prefix. */
+   *  appearing in the user's prompt line. Stays sticky across commits
+   *  so follow-up messages (incl. across iframe navigation) retain the
+   *  context. Replaces any previous pending prefix. */
   setPendingPrefix(text: string): void;
+  /** Clear any sticky pending prefix — usually called when the user
+   *  presses Esc on the companion pane to drop the active selection. */
+  clearPendingPrefix(): void;
   onTerminalInput(handler: (data: string) => void): () => void;
 }
 
@@ -172,7 +176,10 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       } catch {}
     }, 60);
     userBuffer = '';
-    pendingPrefix = null;
+    // pendingPrefix stays sticky — the user expects claude to keep
+    // the marked element in mind across navigation and follow-up
+    // messages. It's replaced when the user alt-clicks something
+    // else or cleared when they press Esc (clearPendingPrefix()).
     bufferValid = true;
     return true;
   }
@@ -346,6 +353,10 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     setPendingPrefix(text: string) {
       pendingPrefix = text;
       process.stderr.write(`[vc] setPendingPrefix: len=${text.length}\n`);
+    },
+    clearPendingPrefix() {
+      pendingPrefix = null;
+      process.stderr.write(`[vc] clearPendingPrefix\n`);
     },
     onTerminalInput(handler) {
       inputListeners.add(handler);

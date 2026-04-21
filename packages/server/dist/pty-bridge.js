@@ -140,7 +140,10 @@ export function registerPtyBridge(app, opts) {
             catch { }
         }, 60);
         userBuffer = '';
-        pendingPrefix = null;
+        // pendingPrefix stays sticky — the user expects claude to keep
+        // the marked element in mind across navigation and follow-up
+        // messages. It's replaced when the user alt-clicks something
+        // else or cleared when they press Esc (clearPendingPrefix()).
         bufferValid = true;
         return true;
     }
@@ -304,6 +307,10 @@ export function registerPtyBridge(app, opts) {
         setPendingPrefix(text) {
             pendingPrefix = text;
             process.stderr.write(`[vc] setPendingPrefix: len=${text.length}\n`);
+        },
+        clearPendingPrefix() {
+            pendingPrefix = null;
+            process.stderr.write(`[vc] clearPendingPrefix\n`);
         },
         onTerminalInput(handler) {
             inputListeners.add(handler);

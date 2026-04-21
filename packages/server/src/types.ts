@@ -1,4 +1,4 @@
-export type EventType = 'pointer' | 'console' | 'network' | 'mutation' | 'navigation' | 'error';
+export type EventType = 'pointer' | 'console' | 'network' | 'mutation' | 'navigation' | 'error' | 'clear-selection';
 
 export interface BaseEvent {
   id: string;
@@ -52,4 +52,5 @@ export type CompanionEvent =
   | (BaseEvent & { type: 'network'; payload: NetworkEventPayload })
   | (BaseEvent & { type: 'mutation'; payload: { adds: number; removes: number; attributeChanges: number } })
   | (BaseEvent & { type: 'navigation'; payload: { newUrl: string; referrer: string } })
-  | (BaseEvent & { type: 'error'; payload: { message: string; stack: string | null } });
+  | (BaseEvent & { type: 'error'; payload: { message: string; stack: string | null } })
+  | (BaseEvent & { type: 'clear-selection'; payload: unknown });

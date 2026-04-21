@@ -6,24 +6,26 @@ import { captureElementScreenshot } from './screenshot';
 import { lookupSourceLocation } from './source-map';
 
 export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
-  let altDown = false;
+  // Alt+Shift (not plain Alt) because on Mac Alt alone is used for
+  // special characters — Alt+L types "@" on a German layout — and
+  // having the picker activate on every Alt press swallowed clicks
+  // and swapped the cursor while the user was just typing.
+  let pickingActive = false;
   let regionStart: { x: number; y: number } | null = null;
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Alt' && !altDown) {
-      altDown = true;
+  function refreshMode(e: KeyboardEvent): void {
+    const shouldBeActive = e.altKey && e.shiftKey;
+    if (shouldBeActive && !pickingActive) {
+      pickingActive = true;
       document.body.style.cursor = 'crosshair';
-      // Block native text-selection while Alt is held so region drags
+      // Block native text-selection while picking so region drags
       // don't also highlight text on the page.
       document.body.style.userSelect = 'none';
       (document.body.style as any).webkitUserSelect = 'none';
-      // Clear any already-selected text from before Alt was pressed.
+      // Clear any already-selected text from before picking started.
       window.getSelection()?.removeAllRanges();
-    }
-  });
-  document.addEventListener('keyup', (e) => {
-    if (e.key === 'Alt') {
-      altDown = false;
+    } else if (!shouldBeActive && pickingActive) {
+      pickingActive = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       (document.body.style as any).webkitUserSelect = '';
@@ -31,12 +33,14 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
       overlay.hideRegionBox();
       regionStart = null;
     }
-  });
+  }
+  document.addEventListener('keydown', refreshMode);
+  document.addEventListener('keyup', refreshMode);
 
-  // Belt-and-braces: prevent any selectstart while Alt is held (covers
-  // edge cases where the style reset didn't propagate to the target).
+  // Belt-and-braces: prevent any selectstart while picking is active
+  // (covers edge cases where the style reset didn't propagate).
   document.addEventListener('selectstart', (e) => {
-    if (altDown) e.preventDefault();
+    if (pickingActive) e.preventDefault();
   }, true);
 
   document.addEventListener('mousemove', (e) => {
@@ -97,11 +101,14 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   }, true);
 
   // Escape clears the persistent selection so the user can reset without
-  // having to click an empty spot.
+  // having to click an empty spot. Also tells the server to drop the
+  // sticky pending prefix, so claude won't keep referencing a selection
+  // the user has explicitly dismissed.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       overlay.hideSelected();
       overlay.hideSelectedRegion();
+      dispatcher.sendRaw({ type: 'clear-selection', timestamp: Date.now() });
     }
   });
 }

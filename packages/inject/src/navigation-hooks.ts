@@ -1,12 +1,23 @@
 import type { Dispatcher } from './dispatcher';
+import type { Overlay } from './overlay';
 
-export function attachNavigationHooks(dispatcher: Dispatcher): void {
+export function attachNavigationHooks(dispatcher: Dispatcher, overlay?: Overlay): void {
   let previousHref = window.location.href;
   const emit = () => {
     const href = window.location.href;
     if (href === previousHref) return;
     const referrer = previousHref;
     previousHref = href;
+    // Drop the visual overlay — the selected element's DOM node is
+    // most likely detached now (SPA re-render) and the frame would
+    // render at stale coordinates / zero size. Server-side snapshot
+    // and the sticky pendingPrefix on the pty survive the nav, so
+    // claude's context is preserved; only the on-screen frame hides.
+    if (overlay) {
+      overlay.hideSelected();
+      overlay.hideSelectedRegion();
+      overlay.hideHover();
+    }
     dispatcher.send({
       type: 'navigation',
       timestamp: Date.now(),

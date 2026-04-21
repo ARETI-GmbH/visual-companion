@@ -43,10 +43,18 @@ async function main(): Promise<void> {
   const store = new EventStore({ maxEvents: 5000, maxAgeMs: 5 * 60 * 1000 });
   const screenshots = new ScreenshotCache(100);
   let gatewayRef: { broadcast(msg: any): void } | null = null;
-  let ptyBridgeRef: { injectInput(text: string): void } | null = null;
+  let ptyBridgeRef: {
+    injectInput(text: string): void;
+    setPendingPrefix?(text: string): void;
+    clearPendingPrefix?(): void;
+  } | null = null;
   const gateway = registerCompanionWebSocket(app, {
     store,
     onEvent: (ev) => {
+      if (ev.type === 'clear-selection') {
+        ptyBridgeRef?.clearPendingPrefix?.();
+        return;
+      }
       if (ev.type !== 'pointer') return;
       const p = ev.payload as {
         cssSelector: string;

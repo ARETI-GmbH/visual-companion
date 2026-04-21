@@ -15,9 +15,13 @@ export interface PtyBridgeControl {
     /** Queue a context prefix to be silently prepended to the user's next
      *  prompt. At Enter time the bridge rewrites the line so claude sees
      *  "prefix + user text" as a single message — without the prefix ever
-     *  appearing in the user's prompt line. Replaces any previous pending
-     *  prefix. */
+     *  appearing in the user's prompt line. Stays sticky across commits
+     *  so follow-up messages (incl. across iframe navigation) retain the
+     *  context. Replaces any previous pending prefix. */
     setPendingPrefix(text: string): void;
+    /** Clear any sticky pending prefix — usually called when the user
+     *  presses Esc on the companion pane to drop the active selection. */
+    clearPendingPrefix(): void;
     onTerminalInput(handler: (data: string) => void): () => void;
 }
 export declare function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions): PtyBridgeControl;

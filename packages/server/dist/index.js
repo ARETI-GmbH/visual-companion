@@ -45,6 +45,10 @@ async function main() {
     const gateway = registerCompanionWebSocket(app, {
         store,
         onEvent: (ev) => {
+            if (ev.type === 'clear-selection') {
+                ptyBridgeRef?.clearPendingPrefix?.();
+                return;
+            }
             if (ev.type !== 'pointer')
                 return;
             const p = ev.payload;

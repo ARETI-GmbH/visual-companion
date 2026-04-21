@@ -1,4 +1,4 @@
-export type EventType = 'pointer' | 'console' | 'network' | 'mutation' | 'navigation' | 'error';
+export type EventType = 'pointer' | 'console' | 'network' | 'mutation' | 'navigation' | 'error' | 'clear-selection';
 export interface BaseEvent {
     id: string;
     timestamp: number;
@@ -78,4 +78,7 @@ export type CompanionEvent = (BaseEvent & {
         message: string;
         stack: string | null;
     };
+}) | (BaseEvent & {
+    type: 'clear-selection';
+    payload: unknown;
 });
