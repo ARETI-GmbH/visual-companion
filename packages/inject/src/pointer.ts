@@ -44,7 +44,7 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   }, true);
 
   document.addEventListener('mousemove', (e) => {
-    if (!altDown) return;
+    if (!pickingActive) return;
     if (regionStart) {
       overlay.showRegionBox(regionStart.x, regionStart.y, e.clientX, e.clientY);
       return;
@@ -57,8 +57,7 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   }, true);
 
   document.addEventListener('mousedown', (e) => {
-    if (!altDown || e.button !== 0) return;
-    if (e.shiftKey) return;
+    if (!pickingActive || e.button !== 0) return;
     // Swallow the mousedown so the browser doesn't start its own
     // text-selection drag underneath our region box.
     e.preventDefault();
@@ -66,7 +65,7 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   }, true);
 
   document.addEventListener('mouseup', async (e) => {
-    if (!altDown) { regionStart = null; return; }
+    if (!pickingActive) { regionStart = null; return; }
     if (regionStart) {
       const dx = Math.abs(e.clientX - regionStart.x);
       const dy = Math.abs(e.clientY - regionStart.y);
@@ -87,7 +86,7 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   }, true);
 
   document.addEventListener('click', async (e) => {
-    if (!altDown) return;
+    if (!pickingActive) return;
     e.preventDefault(); e.stopPropagation();
     const el = e.target as Element;
     const sel = uniqueSelector(el);

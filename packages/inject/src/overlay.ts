@@ -66,8 +66,25 @@ export function createOverlay(): Overlay {
       });
     }
   }
-  window.addEventListener('scroll', reposition, true);
-  window.addEventListener('resize', reposition);
+  // rAF-throttle the reposition. Without this, fast wheel scrolling on
+  // long pages fires the scroll listener ~200×/sec, and even though
+  // reposition does nothing when there's no selection, the event
+  // dispatch + capture-phase bubbling adds visible frame cost to
+  // animation-heavy apps. { passive: true } also restores the browser's
+  // compositor fast-path — with the default (non-passive) listener the
+  // browser has to wait for JS to decide if it'll preventDefault before
+  // scrolling, which is the textbook cause of "choppy scroll" reports.
+  let scheduled = false;
+  const scheduleReposition = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      reposition();
+    });
+  };
+  window.addEventListener('scroll', scheduleReposition, { capture: true, passive: true });
+  window.addEventListener('resize', scheduleReposition, { passive: true });
 
   return {
     showHover(el, selector) {
