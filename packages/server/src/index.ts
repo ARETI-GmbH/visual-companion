@@ -85,6 +85,14 @@ async function main(): Promise<void> {
     clearInterval(watchdog);
     try { await app.close(); } catch {}
     try { rmSync(profileDir, { recursive: true, force: true }); } catch {}
+    // Kill dev-server child that launch.js spawned, if any
+    const devPidRaw = process.env.VISUAL_COMPANION_DEV_PID;
+    if (devPidRaw) {
+      const devPid = parseInt(devPidRaw, 10);
+      if (devPid > 0) {
+        try { process.kill(devPid, 'SIGTERM'); } catch {}
+      }
+    }
     process.exit(0);
   }
 
