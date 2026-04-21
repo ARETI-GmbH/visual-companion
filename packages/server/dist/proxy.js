@@ -15,11 +15,23 @@ export async function registerProxy(app, opts) {
         const forwardHeaders = { ...req.headers };
         delete forwardHeaders.host;
         delete forwardHeaders['content-length'];
-        const upstreamResp = await undiciRequest(upstreamUrl.toString(), {
-            method: req.method,
-            headers: forwardHeaders,
-            body: req.raw,
-        });
+        let upstreamResp;
+        try {
+            upstreamResp = await undiciRequest(upstreamUrl.toString(), {
+                method: req.method,
+                headers: forwardHeaders,
+                body: req.raw,
+                // Dev-servers (Next.js Turbopack, Vite cold start) can take well over
+                // a minute on the first request. Defaults would surface as a cryptic
+                // UND_ERR_HEADERS_TIMEOUT 500 JSON in the iframe.
+                headersTimeout: 10 * 60 * 1000,
+                bodyTimeout: 10 * 60 * 1000,
+            });
+        }
+        catch (err) {
+            reply.status(502).type('text/html').send(upstreamErrorHtml(err, targetOrigin));
+            return;
+        }
         const ctype = upstreamResp.headers['content-type'];
         const isHtml = typeof ctype === 'string' && ctype.includes('text/html');
         for (const [key, value] of Object.entries(upstreamResp.headers)) {
@@ -150,6 +162,43 @@ export function rewriteCookiePath(cookie) {
             return '; Path=/app' + path;
         return '; Path=' + path;
     });
+}
+function upstreamErrorHtml(err, targetOrigin) {
+    const e = err;
+    const code = e?.code ?? 'UNKNOWN';
+    const msg = e?.message ?? String(err);
+    const hint = code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT'
+        ? 'Der Dev-Server hat 10 Min lang keinen Response-Header geschickt. Meist heißt das: er ist abgestürzt oder ein Build-Fehler blockiert ihn. Check das Terminal.'
+        : code === 'ECONNREFUSED'
+            ? 'Der Dev-Server lauscht nicht auf dem Port. Wahrscheinlich beendet. Start ihn neu und drück reload.'
+            : code === 'UND_ERR_SOCKET'
+                ? 'Die Verbindung zum Dev-Server wurde abgerissen (Crash oder Restart). Reload in ein paar Sekunden.'
+                : 'Unerwarteter Proxy-Fehler. Check das Terminal des Dev-Servers.';
+    const safe = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
+    return `<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Visual Companion — Upstream nicht erreichbar</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 24px; color: #222; line-height: 1.5; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    .sub { color: #888; font-size: 14px; margin-bottom: 24px; }
+    pre { background: #fef2f2; color: #991b1b; padding: 14px; border-radius: 8px; border: 1px solid #fecaca; overflow-x: auto; font-size: 13px; }
+    .hint { background: #f9fafb; border-left: 3px solid #6b7280; padding: 12px 16px; margin: 20px 0; border-radius: 4px; font-size: 14px; }
+    .retry { color: #6b7280; font-size: 13px; margin-top: 32px; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Dev-Server antwortet nicht</h1>
+  <div class="sub">Upstream: <code>${safe(targetOrigin)}</code></div>
+  <pre>${safe(code)}: ${safe(msg)}</pre>
+  <div class="hint">${safe(hint)}</div>
+  <div class="retry">Diese Seite lädt sich alle 4 Sekunden neu — sobald der Dev-Server antwortet, ist deine App zurück.</div>
+  <script>setTimeout(() => location.reload(), 4000);</script>
+</body>
+</html>`;
 }
 export function injectScript(html, scriptTag) {
     const headClose = html.match(/<\/head\s*>/i);

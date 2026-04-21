@@ -198,6 +198,11 @@ function launchChrome(port, serverPid, upstreamUrl) {
 }
 
 function autoDetectUrl(cwd) {
+  // Only return an explicit hint — framework defaults (3000, 5173 …) are
+  // unreliable because Next/Vite fall back to +1 when the port is busy, or
+  // the same port is already held by an unrelated dev server. Without an
+  // explicit hint we'd rather start the dev server and read the real URL
+  // from its stdout.
   const config = path.join(cwd, '.visual-companion.json');
   if (fs.existsSync(config)) {
     try {
@@ -212,10 +217,6 @@ function autoDetectUrl(cwd) {
       const dev = j?.scripts?.dev || '';
       const m = dev.match(/--port[= ](\d+)/) || dev.match(/-p[= ](\d+)/) || dev.match(/PORT=(\d+)/);
       if (m) return `http://localhost:${m[1]}`;
-      if (/\bnext\b/.test(dev)) return 'http://localhost:3000';
-      if (/\bvite\b/.test(dev)) return 'http://localhost:5173';
-      if (/\bastro\b/.test(dev)) return 'http://localhost:4321';
-      if (/\bnuxt\b/.test(dev)) return 'http://localhost:3000';
     } catch {}
   }
   return null;
