@@ -1,7 +1,8 @@
 .superpowers/
 node_modules/
 .DS_Store
-dist/
+# Only root-level dist is ignored; packages/*/dist is committed for plugin distribution
+/dist/
 build/
 .env
 .env.local

@@ -1,0 +1,27 @@
+{
+  "name": "visual-companion",
+  "version": "0.1.0",
+  "description": "Unified Chrome-App-Window mit Live-Pointer-Debugging für Web-App-Entwicklung. Alt+Click im Browser-Pane → Claude kennt das Element (DOM, Styles, Screenshot, Source-Map, Ancestors).",
+  "author": {
+    "name": "ARETI GmbH",
+    "url": "https://github.com/ARETI-GmbH"
+  },
+  "homepage": "https://github.com/ARETI-GmbH/visual-companion",
+  "keywords": [
+    "mcp",
+    "browser",
+    "devtools",
+    "pointer",
+    "live-debugging",
+    "chrome-app",
+    "proxy",
+    "xterm"
+  ],
+  "mcpServers": {
+    "visual-companion-mcp": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/packages/server/dist/mcp-entry.js"],
+      "transport": "stdio"
+    }
+  }
+}
