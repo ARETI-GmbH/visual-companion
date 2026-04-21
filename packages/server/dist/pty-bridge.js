@@ -49,7 +49,6 @@ function sendData(socket, data) {
     }
 }
 export function registerPtyBridge(app, opts) {
-    let currentPty = null;
     let currentSocket = null;
     const inputListeners = new Set();
     app.get('/_companion/pty', { websocket: true }, (conn) => {
@@ -91,14 +90,12 @@ export function registerPtyBridge(app, opts) {
             socket.close();
             return;
         }
-        currentPty = pty;
         pty.onData((data) => sendData(socket, data));
         pty.onExit(({ exitCode, signal }) => {
             sendData(socket, `\r\n\x1b[90m[visual-companion] claude exited (code ${exitCode}${signal ? `, signal ${signal}` : ''})\x1b[0m\r\n`);
             if (socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'exit', exitCode }));
             }
-            currentPty = null;
         });
         socket.on('message', (raw) => {
             try {
@@ -120,7 +117,6 @@ export function registerPtyBridge(app, opts) {
                 pty.kill();
             }
             catch { }
-            currentPty = null;
             if (currentSocket === socket)
                 currentSocket = null;
         });
@@ -132,9 +128,7 @@ export function registerPtyBridge(app, opts) {
         // we do NOT write to claude's stdin, which would make ANSI sequences
         // get parsed as keystrokes and vanish silently.
         writeToTerminal(text) {
-            const ok = currentSocket && currentSocket.readyState === WebSocket.OPEN;
-            process.stderr.write(`[vc] writeToTerminal: bytes=${text.length} socket=${!!currentSocket} open=${ok}\n`);
-            if (ok) {
+            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
                 currentSocket.send(JSON.stringify({ type: 'data', data: text }));
             }
         },

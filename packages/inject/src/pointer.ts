@@ -87,6 +87,11 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
     e.preventDefault(); e.stopPropagation();
     const el = e.target as Element;
     const sel = uniqueSelector(el);
+    // Hide the live hover frame and the in-progress region box as soon as
+    // we commit a click — otherwise the user sees hover + selected at
+    // the same time and it looks like we've selected two things.
+    overlay.hideHover();
+    overlay.hideRegionBox();
     overlay.showSelected(el, sel);
     await emitPointer(dispatcher, el);
   }, true);

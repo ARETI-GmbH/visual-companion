@@ -41,18 +41,11 @@ async function main(): Promise<void> {
 
   const store = new EventStore({ maxEvents: 5000, maxAgeMs: 5 * 60 * 1000 });
   const screenshots = new ScreenshotCache(100);
-  // Forward-declared: pty is created below, but the gateway needs to know
-  // about it so Alt+Click can surface as a visible line in the claude pane.
-  let ptyRef: { writeToTerminal(text: string): void } | null = null;
+  let gatewayRef: { broadcast(msg: any): void } | null = null;
   const gateway = registerCompanionWebSocket(app, {
     store,
     onEvent: (ev) => {
-      // Debug line lands in the daemon log so we can diagnose missing
-      // notifications without asking the user to run scripts.
-      process.stderr.write(
-        `[vc] event received: type=${ev.type} ptyRef=${!!ptyRef}\n`,
-      );
-      if (!ptyRef || ev.type !== 'pointer') return;
+      if (ev.type !== 'pointer') return;
       const p = ev.payload as {
         cssSelector: string;
         boundingBox: { width: number; height: number };
@@ -60,17 +53,26 @@ async function main(): Promise<void> {
       };
       let pathname = '';
       try { pathname = new URL(ev.url).pathname; } catch {}
-      const text = p.textContent
-        ? ' · "' + p.textContent.replace(/\s+/g, ' ').slice(0, 60).trim() + '"'
+      const preview = p.textContent
+        ? p.textContent.replace(/\s+/g, ' ').slice(0, 80).trim()
         : '';
-      const w = Math.round(p.boundingBox.width);
-      const h = Math.round(p.boundingBox.height);
-      ptyRef.writeToTerminal(
-        `\r\n\x1b[2;36m[📍 companion] ${p.cssSelector} · ${w}×${h}px · ${pathname}${text}` +
-          `\r\n  └─ mcp: get_pointed_element / get_pointed_history\x1b[0m\r\n`,
-      );
+      // Broadcast a selection update to every connected companion ws
+      // client. The shell will render it as a sidebar badge; inject.js
+      // will ignore unknown types silently. We intentionally do NOT
+      // write this into the PTY — claude's TUI owns the xterm and any
+      // cross-talk shifts its prompt out of place.
+      gatewayRef?.broadcast({
+        type: 'selection-update',
+        selector: p.cssSelector,
+        url: ev.url,
+        pathname,
+        width: Math.round(p.boundingBox.width),
+        height: Math.round(p.boundingBox.height),
+        text: preview,
+      });
     },
   });
+  gatewayRef = gateway;
 
   if (cfg.injectFile) {
     app.get('/_companion/inject.js', async (_req, reply) => {
@@ -96,7 +98,6 @@ async function main(): Promise<void> {
     companionPort: () => resolvedPort,
     claudeArgs: cfg.claudeArgs,
   });
-  ptyRef = pty; // wire lazy ref so pointer events can surface in the pane
 
   registerMcpHandlers(app, { store, gateway, pty });
 

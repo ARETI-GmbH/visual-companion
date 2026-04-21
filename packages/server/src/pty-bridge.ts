@@ -63,7 +63,6 @@ function sendData(socket: WebSocket, data: string): void {
 }
 
 export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions): PtyBridgeControl {
-  let currentPty: IPty | null = null;
   let currentSocket: WebSocket | null = null;
   const inputListeners = new Set<(d: string) => void>();
 
@@ -120,7 +119,6 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       socket.close();
       return;
     }
-    currentPty = pty;
 
     pty.onData((data) => sendData(socket, data));
     pty.onExit(({ exitCode, signal }) => {
@@ -131,7 +129,6 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'exit', exitCode }));
       }
-      currentPty = null;
     });
 
     socket.on('message', (raw: Buffer) => {
@@ -148,7 +145,6 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     });
     socket.on('close', () => {
       try { pty.kill(); } catch {}
-      currentPty = null;
       if (currentSocket === socket) currentSocket = null;
     });
   });
@@ -160,12 +156,8 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     // we do NOT write to claude's stdin, which would make ANSI sequences
     // get parsed as keystrokes and vanish silently.
     writeToTerminal(text: string) {
-      const ok = currentSocket && currentSocket.readyState === WebSocket.OPEN;
-      process.stderr.write(
-        `[vc] writeToTerminal: bytes=${text.length} socket=${!!currentSocket} open=${ok}\n`,
-      );
-      if (ok) {
-        currentSocket!.send(JSON.stringify({ type: 'data', data: text }));
+      if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+        currentSocket.send(JSON.stringify({ type: 'data', data: text }));
       }
     },
     onTerminalInput(handler) {
