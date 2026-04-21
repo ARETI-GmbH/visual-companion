@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { readFileSync, mkdirSync, rmSync, watch as fsWatch } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { getConfigFromEnv } from './config.js';
 import { registerProxy } from './proxy.js';
 import { registerCompanionWebSocket } from './websocket.js';
@@ -178,6 +179,16 @@ async function main() {
             rmSync(profileDir, { recursive: true, force: true });
         }
         catch { }
+        // Reverse transform: if this daemon was started as a carry-over
+        // (the user's outer claude was replaced by the companion window),
+        // now that the window is going away we re-open a terminal at the
+        // same cwd and resume the conversation — so they end up exactly
+        // where they started, with all the intermediate work preserved.
+        const returnApp = process.env.VISUAL_COMPANION_RETURN_APP;
+        const returnCwd = process.env.VISUAL_COMPANION_RETURN_CWD;
+        if (returnApp && returnCwd) {
+            spawnReturnTerminal(returnApp, returnCwd);
+        }
         // Kill dev-server child that launch.js spawned, if any
         const devPidRaw = process.env.VISUAL_COMPANION_DEV_PID;
         if (devPidRaw) {
@@ -216,6 +227,53 @@ main().catch((err) => {
  */
 const IGNORE = /(^|[\/\\])(node_modules|\.git|\.next|\.turbo|\.cache|\.svelte-kit|dist|build|out|coverage|\.DS_Store)([\/\\]|$)/;
 const IGNORE_TAIL = /(\.swp|\.swx|~|\.tmp)$/;
+/**
+ * Open a new terminal window in `cwd` and start `claude --continue`.
+ * Called during shutdown when the outer claude had been closed on launch;
+ * this restores the user to an interactive claude session on the same
+ * conversation state they were in before they opened the companion.
+ */
+function spawnReturnTerminal(app, cwd) {
+    if (process.platform !== 'darwin')
+        return;
+    // Tiny synchronous pause so the pty-claude has a moment to flush its
+    // save to disk before the new --continue reads it.
+    const waitUntil = Date.now() + 400;
+    while (Date.now() < waitUntil) { /* intentional busy wait — <1 tick */ }
+    const cmd = `cd ${JSON.stringify(cwd)} && claude --continue`;
+    let script = '';
+    if (app === 'Terminal') {
+        script = `
+      tell application "Terminal"
+        activate
+        do script ${JSON.stringify(cmd)}
+      end tell
+    `;
+    }
+    else if (app === 'iTerm') {
+        script = `
+      tell application "iTerm"
+        activate
+        create window with default profile
+        tell current session of current window
+          write text ${JSON.stringify(cmd)}
+        end tell
+      end tell
+    `;
+    }
+    else {
+        return;
+    }
+    try {
+        spawnSync('osascript', ['-e', script], {
+            timeout: 4000,
+            stdio: 'ignore',
+        });
+    }
+    catch {
+        // best-effort
+    }
+}
 function startFileWatcher(cwd, onQuiet) {
     let timer = null;
     let watcher = null;

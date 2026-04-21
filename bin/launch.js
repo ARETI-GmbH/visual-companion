@@ -172,6 +172,23 @@ const DEV_STDOUT_BUFFER = { text: '' };
   if (devServerPid) serverEnv.VISUAL_COMPANION_DEV_PID = String(devServerPid);
   if (claudeArgs.length) serverEnv.VISUAL_COMPANION_CLAUDE_ARGS = claudeArgs.join(' ');
 
+  // If this is a carry-over launch, detect the terminal app that owns
+  // our tty now — before the daemon starts, because probing needs our
+  // own process tree still intact. The daemon reads these env vars at
+  // shutdown time to re-spawn a terminal with `claude --continue`,
+  // completing the round-trip transformation.
+  if (shouldCloseOuterClaude) {
+    const ownTty = findOwnTty();
+    const termApp = ownTty ? findTerminalAppForTty(ownTty) : null;
+    console.log(
+      `visual-companion: terminal detection — tty=${ownTty ?? 'n/a'} app=${termApp ?? 'n/a (unsupported)'}`,
+    );
+    if (termApp) {
+      serverEnv.VISUAL_COMPANION_RETURN_APP = termApp;
+      serverEnv.VISUAL_COMPANION_RETURN_CWD = cwd;
+    }
+  }
+
   // Redirect daemon stdout/stderr to a log file so we can diagnose issues
   // after launch.js detaches. Log path is exposed via the daemon's /health.
   const logPath = `/tmp/visual-companion-${process.pid}.log`;
@@ -511,7 +528,11 @@ function startDevServer(cwd, devCommand) {
     detached: true,
     stdio: ['ignore', devLogFd, devLogFd],
     cwd,
-    env: process.env,
+    // BROWSER=none stops Vite / CRA / any create-<x>-app style dev
+    // server from opening ITS OWN Chrome tab alongside our window —
+    // that race was what left the companion showing ECONNREFUSED
+    // while the user's real dev server lived in another tab.
+    env: { ...process.env, BROWSER: 'none' },
   });
   fs.closeSync(devLogFd); // child holds its own dup; we don't need ours
 

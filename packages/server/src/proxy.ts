@@ -34,6 +34,14 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
       return;
     }
     const upstreamUrl = new URL(rawPath, targetOrigin + '/');
+    // Force IPv4 loopback: `localhost` resolves to ::1 (IPv6) before
+    // 127.0.0.1 on most macOS systems, but many dev servers (Vite's
+    // default, next-turbopack in some configs) bind IPv4 only. Using
+    // 127.0.0.1 explicitly avoids a misleading ECONNREFUSED when the
+    // dev server is actually up.
+    if (upstreamUrl.hostname === 'localhost') {
+      upstreamUrl.hostname = '127.0.0.1';
+    }
     for (const [k, v] of Object.entries(req.query as Record<string, string>)) {
       upstreamUrl.searchParams.set(k, v);
     }
@@ -113,7 +121,9 @@ export function attachWebSocketProxy(
   targetOrigin: string,
 ): void {
   const target = new URL(targetOrigin);
-  const upstreamHost = target.hostname;
+  // Same IPv4 pinning as the HTTP proxy, otherwise HMR WebSockets
+  // (Vite, Next Turbopack) fail exactly the same way.
+  const upstreamHost = target.hostname === 'localhost' ? '127.0.0.1' : target.hostname;
   const upstreamPort = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {

@@ -5,6 +5,8 @@ const iframe = document.getElementById('app-frame') as HTMLIFrameElement;
 const urlInput = document.getElementById('url-input') as HTMLInputElement;
 const reloadBtn = document.getElementById('btn-reload')!;
 const devtoolsBtn = document.getElementById('btn-devtools')!;
+const backBtn = document.getElementById('btn-back') ?? undefined;
+const forwardBtn = document.getElementById('btn-forward') ?? undefined;
 const divider = document.getElementById('divider')!;
 const main = document.querySelector('.main') as HTMLElement;
 const leftPane = document.querySelector('.pane-left') as HTMLElement;
@@ -12,7 +14,7 @@ const leftPane = document.querySelector('.pane-left') as HTMLElement;
 const config = new URLSearchParams(window.location.search);
 const targetUrl = config.get('target') ?? '/';
 
-initIframe({ iframe, urlInput, reloadBtn, devtoolsBtn, targetUrl });
+initIframe({ iframe, urlInput, reloadBtn, devtoolsBtn, backBtn, forwardBtn, targetUrl });
 initTerminal({ container: document.getElementById('terminal')! });
 
 // Draggable divider

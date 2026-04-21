@@ -3,6 +3,8 @@ export interface IframeOptions {
   urlInput: HTMLInputElement;
   reloadBtn: HTMLElement;
   devtoolsBtn: HTMLElement;
+  backBtn?: HTMLElement;
+  forwardBtn?: HTMLElement;
   targetUrl: string;
 }
 
@@ -13,7 +15,7 @@ export interface IframeOptions {
  * that's the URL the user actually debugs against.
  */
 export function initIframe(opts: IframeOptions): void {
-  const { iframe, urlInput, reloadBtn, devtoolsBtn, targetUrl } = opts;
+  const { iframe, urlInput, reloadBtn, devtoolsBtn, backBtn, forwardBtn, targetUrl } = opts;
 
   const qs = new URLSearchParams(window.location.search);
   const upstreamOrigin = stripTrailingSlash(qs.get('upstream') || '');
@@ -39,6 +41,15 @@ export function initIframe(opts: IframeOptions): void {
   reloadBtn.addEventListener('click', () => reload(iframe));
   devtoolsBtn.addEventListener('click', () => {
     alert('Right-click the iframe area → Inspect Element for DevTools.');
+  });
+  // Because the iframe lives on the proxy origin (same as this shell),
+  // we can drive its history directly. No navigation state tracking
+  // needed — if there's nothing to go to, .back() / .forward() no-op.
+  backBtn?.addEventListener('click', () => {
+    try { iframe.contentWindow?.history.back(); } catch {}
+  });
+  forwardBtn?.addEventListener('click', () => {
+    try { iframe.contentWindow?.history.forward(); } catch {}
   });
 
   urlInput.addEventListener('keydown', (e) => {
