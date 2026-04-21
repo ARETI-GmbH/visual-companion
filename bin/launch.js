@@ -281,30 +281,58 @@ function detectDevCommand(cwd) {
 }
 
 /**
- * Spawn the dev server detached; tap its stdout+stderr into DEV_STDOUT_BUFFER
- * for URL detection, and forward it with "[dev]" prefix so the user sees
- * startup progress. Returns { pid }.
+ * Spawn the dev server detached, writing its stdout+stderr into a log file.
+ *
+ * CRITICAL: we must NOT use `stdio: ['ignore', 'pipe', 'pipe']` here. The
+ * pipes are bound to launch.js's process; when launch.js exits (200ms after
+ * daemon is ready), the pipes close, and the next Next.js / Vite log write
+ * raises EPIPE → the dev server crashes. That left the user with a daemon
+ * proxying to a port that no longer answers.
+ *
+ * Using a file descriptor from fs.openSync gives the child its own dup'd
+ * fd that survives launch.js's exit. The file also doubles as a durable
+ * log (`/tmp/visual-companion-dev-<pid>.log`) the user can tail for
+ * Turbopack errors after detach.
+ *
+ * URL detection switches from stream tapping to file polling, feeding the
+ * same DEV_STDOUT_BUFFER shape everyone else already reads.
  */
 function startDevServer(cwd, devCommand) {
+  const devLogPath = `/tmp/visual-companion-dev-${process.pid}.log`;
+  try { fs.writeFileSync(devLogPath, ''); } catch {}
+  const devLogFd = fs.openSync(devLogPath, 'a');
   const devServer = spawn(devCommand.cmd, devCommand.args, {
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', devLogFd, devLogFd],
     cwd,
     env: process.env,
   });
-  const tap = (stream, writer) => {
-    stream?.on('data', (chunk) => {
-      const str = chunk.toString();
-      DEV_STDOUT_BUFFER.text += str;
-      // Cap buffer to last 32kb to avoid unbounded growth.
+  fs.closeSync(devLogFd); // child holds its own dup; we don't need ours
+
+  // Tail the log file into the shared buffer so URL detection sees updates
+  // and the user sees `[dev] …` lines in launch.js's stdout until detach.
+  let lastSize = 0;
+  const tail = setInterval(() => {
+    try {
+      const st = fs.statSync(devLogPath);
+      if (st.size <= lastSize) return;
+      const fh = fs.openSync(devLogPath, 'r');
+      const buf = Buffer.alloc(st.size - lastSize);
+      fs.readSync(fh, buf, 0, buf.length, lastSize);
+      fs.closeSync(fh);
+      lastSize = st.size;
+      const chunk = buf.toString('utf8');
+      DEV_STDOUT_BUFFER.text += chunk;
       if (DEV_STDOUT_BUFFER.text.length > 32768) {
         DEV_STDOUT_BUFFER.text = DEV_STDOUT_BUFFER.text.slice(-32768);
       }
-      writer.write('[dev] ' + str);
-    });
-  };
-  tap(devServer.stdout, process.stdout);
-  tap(devServer.stderr, process.stderr);
+      process.stdout.write(chunk.replace(/^/gm, '[dev] '));
+    } catch {}
+  }, 200);
+  // When launch.js exits via process.exit(), intervals die with it — no
+  // need for an explicit clear. Keep the ref so the tick survives GC.
+  void tail;
+
   devServer.on('exit', (code) => {
     if (code !== 0 && code !== null) {
       console.error('visual-companion: dev server exited early, code=', code);
