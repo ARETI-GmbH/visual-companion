@@ -24,7 +24,11 @@ export function initIframe(opts: IframeOptions): void {
   urlInput.value = upstreamOrigin || targetUrl;
 
   // When the iframe navigates (redirect, link click, form submit), reflect
-  // the real upstream URL in the URL bar.
+  // the real upstream URL in the URL bar AND re-attach our Cmd+R / Cmd+L
+  // keybindings to the iframe's document. Without the iframe-side listener,
+  // focusing inside the app swallows the shell's keydown handler and Cmd+R
+  // falls through to Chrome's default, which reloads the whole window and
+  // takes out the claude session.
   iframe.addEventListener('load', () => {
     try {
       const iframeHref = iframe.contentWindow?.location.href;
@@ -33,6 +37,23 @@ export function initIframe(opts: IframeOptions): void {
       urlInput.value = upstreamOrigin
         ? upstreamOrigin + frameUrl.pathname + frameUrl.search + frameUrl.hash
         : iframeHref;
+
+      const doc = iframe.contentDocument;
+      if (doc) {
+        doc.addEventListener('keydown', (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+            e.preventDefault();
+            e.stopPropagation();
+            reload(iframe, e.shiftKey);
+          }
+          if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
+            e.preventDefault();
+            e.stopPropagation();
+            urlInput.focus();
+            urlInput.select();
+          }
+        }, { capture: true });
+      }
     } catch {
       // Cross-origin iframe (shouldn't happen through proxy) — leave URL bar alone
     }
