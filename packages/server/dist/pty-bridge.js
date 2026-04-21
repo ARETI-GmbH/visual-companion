@@ -66,67 +66,70 @@ export function registerPtyBridge(app, opts) {
     let bufferValid = true;
     let pendingPrefix = null;
     function consumeInputChunk(data) {
+        // Diagnostic: first 24 bytes as hex so we can see every escape
+        // sequence the xterm sends. Goes to the daemon log (not xterm).
+        const hex = Array.from(data.slice(0, 24))
+            .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+            .join(' ');
+        process.stderr.write(`[vc] in  len=${data.length}  hex=${hex}  validBefore=${bufferValid}\n`);
         if (data === '\x7f' || data === '\b') {
             userBuffer = userBuffer.slice(0, -1);
             return;
         }
         if (data === '\x03' || data === '\x15') {
-            // Ctrl+C (abort) or Ctrl+U (clear line) — prompt is being reset.
             userBuffer = '';
             pendingPrefix = null;
             bufferValid = true;
             return;
         }
-        if (data.length >= 3 && data.charCodeAt(0) === 0x1b && data[1] === '[') {
-            // CSI escape sequence. Claude Code enables focus tracking and
-            // mouse reporting, which means the xterm client sends us things
-            // like \x1b[I (focus gained) or \x1b[<0;13;7M (SGR mouse) while
-            // the user is just clicking around panes. Those events don't
-            // move claude's input cursor, so we ignore them. Sequences that
-            // DO move the cursor (arrow keys) still invalidate the buffer.
-            const body = data.slice(2);
-            if (body === 'I' || body === 'O')
-                return; // focus in/out
-            if (/^<?[\d;]*[Mm]$/.test(body))
-                return; // SGR mouse report
-            if (/^200~/.test(body) || /^201~/.test(body))
-                return; // paste wrap
+        // Strip everything we know is position-neutral from the chunk
+        // (focus reports, SGR mouse, bracketed-paste markers, bare ESC).
+        // What remains is either printable or a buffer-breaking key.
+        let remainder = data
+            .replace(/\x1b\[I/g, '')
+            .replace(/\x1b\[O/g, '')
+            .replace(/\x1b\[<[\d;]*[Mm]/g, '')
+            .replace(/\x1b\[M.../g, '')
+            .replace(/\x1b\[200~/g, '')
+            .replace(/\x1b\[201~/g, '');
+        if (remainder.length === 0)
+            return; // pure focus/mouse noise
+        // Arrow keys, home/end, delete, etc. — cursor-moving sequences.
+        // Recognize them and invalidate (we can't reconstruct buffer
+        // position after the user moved the cursor).
+        if (/\x1b\[[A-D]/.test(remainder) || /\x1bO[A-D]/.test(remainder)) {
             bufferValid = false;
             return;
         }
-        if (data.charCodeAt(0) === 0x1b) {
-            // Bare ESC or Alt+char — can't track.
-            bufferValid = false;
-            return;
-        }
-        if (data.length === 1 && data >= ' ') {
-            userBuffer += data;
-            return;
-        }
-        if (data.length > 1) {
-            // Multi-byte chunk — paste, UTF-8 sequence, wrapped typing, or
-            // a burst that includes an escape sequence at the boundary.
-            // Strip known harmless CSI fragments, then controls; what's left
-            // is the user's printable intent.
-            const withoutCsi = data.replace(/\x1b\[[\d;<>?]*[A-Za-z~]/g, '');
-            const stripped = withoutCsi.replace(/[\x00-\x1f\x7f]/g, '');
-            userBuffer += stripped;
-            return;
-        }
-        // Anything else (unknown single control char) — can't track.
-        bufferValid = false;
+        // Any other CSI we don't understand: be conservative — strip it
+        // and keep going. Most unknown CSI responses don't edit the
+        // prompt line.
+        remainder = remainder.replace(/\x1b\[[\d;<>?]*[A-Za-z~]/g, '');
+        remainder = remainder.replace(/\x1bO./g, '');
+        // Control bytes (tab, newline accidentally in paste, etc.) are
+        // ambiguous — strip and keep tracking but append nothing for them.
+        const printable = remainder.replace(/[\x00-\x1f\x7f]/g, '');
+        userBuffer += printable;
     }
     function commitWithPrefix(pty) {
-        const reason = !pendingPrefix ? 'no-prefix' :
-            !bufferValid ? 'buffer-invalid' :
-                userBuffer.length === 0 ? 'empty-buffer' : null;
-        if (reason) {
-            process.stderr.write(`[vc] commit skipped: ${reason} (prefix=${!!pendingPrefix} valid=${bufferValid} buf=${userBuffer.length})\n`);
+        if (!pendingPrefix) {
+            process.stderr.write('[vc] commit skipped: no pending prefix\n');
             return false;
         }
-        process.stderr.write(`[vc] commit with prefix: buf.len=${userBuffer.length} prefix.len=${pendingPrefix.length}\n`);
-        const deletion = '\x7f'.repeat(userBuffer.length);
-        pty.write(deletion + pendingPrefix + userBuffer + '\r');
+        if (bufferValid && userBuffer.length > 0) {
+            // Clean path: delete what the user typed, retype prefix+buffer.
+            process.stderr.write(`[vc] commit PRIMARY: buf=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`);
+            const deletion = '\x7f'.repeat(userBuffer.length);
+            pty.write(deletion + pendingPrefix + userBuffer + '\r');
+        }
+        else {
+            // Fallback: we don't know buffer state (arrow keys, empty, …).
+            // Use Ctrl+A (home) + prefix + Ctrl+E (end) + Enter — lands the
+            // prefix at the start of whatever claude's line contains right
+            // now. Works even if our tracking drifted.
+            process.stderr.write(`[vc] commit FALLBACK (ctrl-a/e): bufValid=${bufferValid} bufLen=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`);
+            pty.write('\x01' + pendingPrefix + '\x05\r');
+        }
         userBuffer = '';
         pendingPrefix = null;
         bufferValid = true;
@@ -188,6 +191,7 @@ export function registerPtyBridge(app, opts) {
                     // selection prefix and a trackable buffer, intercept and
                     // rewrite the line so claude receives "prefix + buffer".
                     if (data === '\r' || data === '\n' || data === '\r\n') {
+                        process.stderr.write(`[vc] ENTER  valid=${bufferValid} buf=${userBuffer.length} prefix=${!!pendingPrefix}\n`);
                         if (!commitWithPrefix(pty))
                             pty.write(data);
                         userBuffer = '';
