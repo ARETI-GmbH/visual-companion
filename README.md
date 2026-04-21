@@ -19,6 +19,7 @@ Beim ersten Aufruf von `/visual-companion` installiert das Plugin automatisch se
 ```
 /visual-companion                            # Auto-detect aus package.json scripts.dev
 /visual-companion http://localhost:3000      # Explizite URL
+/visual-companion-stop                       # Beendet alle Daemons + Chrome-Windows (z.B. nach Plugin-Update)
 ```
 
 Oder `/vc` als Alias. Das Plugin:
