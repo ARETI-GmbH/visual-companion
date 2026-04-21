@@ -1,5 +1,8 @@
 export interface DispatcherOptions {
-  port: number;
+  /** Optional explicit host (e.g. "localhost:51234"). If unset, uses
+   *  window.location.host — which is the right answer whenever the
+   *  companion proxy is serving the page the inject is embedded in. */
+  host?: string;
   onServerMessage: (msg: any) => void;
 }
 
@@ -28,7 +31,9 @@ export class Dispatcher {
   }
 
   private connect(): void {
-    const ws = new WebSocket(`ws://localhost:${this.opts.port}/_companion/ws`);
+    const host = this.opts.host || window.location.host;
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${scheme}://${host}/_companion/ws`);
     this.ws = ws;
     ws.addEventListener('open', () => {
       this.reconnectMs = 1000;
