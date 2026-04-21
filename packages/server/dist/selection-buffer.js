@@ -55,6 +55,7 @@ export class SelectionBuffer {
             pathname: i.pathname,
             selector: i.selector,
             textPreview: i.textPreview,
+            ...(i.regionRect ? { regionRect: i.regionRect } : {}),
         }));
     }
     size() {

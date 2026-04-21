@@ -12,6 +12,12 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   // and swapped the cursor while the user was just typing.
   let pickingActive = false;
   let regionStart: { x: number; y: number } | null = null;
+  // Set briefly after a region-drag so the synthetic click that the
+  // browser fires right after mouseup doesn't ALSO trigger an element
+  // pick (which would add the body/root element on top of the region,
+  // making every drag produce two buffer entries — the "body is
+  // selected after drag" bug users saw).
+  let suppressNextClick = false;
 
   function refreshMode(e: KeyboardEvent): void {
     const shouldBeActive = e.altKey && e.shiftKey;
@@ -78,6 +84,12 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
         await emitRegion(dispatcher, start, end);
         regionStart = null;
         overlay.hideRegionBox();
+        // mouseup is the end of the drag; the browser still
+        // dispatches a click right after. We don't want that click
+        // to turn into a second (element) pick on top of the region
+        // we just captured.
+        suppressNextClick = true;
+        setTimeout(() => { suppressNextClick = false; }, 150);
         e.preventDefault(); e.stopPropagation();
         return;
       }
@@ -88,6 +100,10 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   document.addEventListener('click', async (e) => {
     if (!pickingActive) return;
     e.preventDefault(); e.stopPropagation();
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      return;
+    }
     const el = e.target as Element;
     // Hide the live hover frame as soon as we commit a click —
     // otherwise hover + selected show at the same time and it looks
@@ -111,6 +127,7 @@ async function emitPointer(
   dispatcher: Dispatcher,
   el: Element,
   kind: 'element' | 'region',
+  regionRect?: { x: number; y: number; w: number; h: number },
 ): Promise<void> {
   const r = el.getBoundingClientRect();
   const styles = filterComputedStyles(window.getComputedStyle(el));
@@ -151,6 +168,7 @@ async function emitPointer(
       screenshotDataUrl: screenshot,
       sourceLocation,
       ancestors,
+      ...(regionRect ? { regionRect } : {}),
     },
   });
 }
@@ -160,14 +178,31 @@ async function emitRegion(
   start: { x: number; y: number },
   end: { x: number; y: number }
 ): Promise<void> {
-  const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
-  const w = Math.abs(end.x - start.x), h = Math.abs(end.y - start.y);
-  const enclosed: Element[] = [];
-  document.querySelectorAll('*').forEach((el) => {
-    const r = el.getBoundingClientRect();
-    if (r.left >= x && r.top >= y && r.right <= x + w && r.bottom <= y + h) enclosed.push(el);
-  });
-  const anchor = enclosed[0];
-  if (!anchor) return;
-  await emitPointer(dispatcher, anchor, 'region');
+  // Viewport coords of the drawn rectangle.
+  const vx = Math.min(start.x, end.x), vy = Math.min(start.y, end.y);
+  const vw = Math.abs(end.x - start.x), vh = Math.abs(end.y - start.y);
+  // Pick the smallest ancestor that fully contains the drawn rect,
+  // starting from the element at the rectangle's centre. That's the
+  // natural "this thing" for claude (usually a wrapper div), and
+  // always beats querySelectorAll('*') DOM-order which returned a
+  // tiny element near the top-left that happened to be fully
+  // enclosed (e.g. an inner span), so the visible frame looked
+  // totally wrong compared to what the user drew.
+  const cx = vx + vw / 2, cy = vy + vh / 2;
+  let anchor: Element | null = document.elementFromPoint(cx, cy);
+  while (anchor) {
+    const r = anchor.getBoundingClientRect();
+    if (r.left <= vx && r.top <= vy && r.right >= vx + vw && r.bottom >= vy + vh) break;
+    anchor = anchor.parentElement;
+  }
+  if (!anchor) anchor = document.body;
+  // Store the rectangle in document coords so scrolling after the
+  // pick doesn't shift where the frame renders.
+  const regionRect = {
+    x: vx + window.scrollX,
+    y: vy + window.scrollY,
+    w: vw,
+    h: vh,
+  };
+  await emitPointer(dispatcher, anchor, 'region', regionRect);
 }

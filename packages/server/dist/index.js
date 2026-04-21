@@ -118,6 +118,7 @@ async function main() {
                 pathname: pathname || '/',
                 selector: p.cssSelector,
                 textPreview: preview,
+                regionRect: p.regionRect,
                 payload: p,
             });
             syncBuffer();

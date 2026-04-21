@@ -1,5 +1,16 @@
 import type { PointerEventPayload } from './types';
 
+/** Rectangle the user actually drew, in document coordinates (viewport
+ *  coords + scroll at pick time). Only present for region picks — the
+ *  overlay renders this rectangle instead of the anchor element's
+ *  bounding box so the visible frame matches what the user drew. */
+export interface RegionRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface BufferedSelection {
   id: string;
   label: string;
@@ -8,6 +19,7 @@ export interface BufferedSelection {
   pathname: string;
   selector: string;
   textPreview: string;
+  regionRect?: RegionRect;
   payload: PointerEventPayload;
   addedAt: number;
 }
@@ -20,6 +32,7 @@ export interface SelectionSummary {
   pathname: string;
   selector: string;
   textPreview: string;
+  regionRect?: RegionRect;
 }
 
 /**
@@ -84,6 +97,7 @@ export class SelectionBuffer {
       pathname: i.pathname,
       selector: i.selector,
       textPreview: i.textPreview,
+      ...(i.regionRect ? { regionRect: i.regionRect } : {}),
     }));
   }
 

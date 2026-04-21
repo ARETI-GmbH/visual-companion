@@ -6,6 +6,12 @@ export interface BufferItem {
   pathname: string;
   selector: string;
   textPreview: string;
+  /** Region picks carry the rectangle the user actually drew, in
+   *  document coordinates. If present, the overlay renders THIS
+   *  rectangle instead of the element's bbox — that's what the user
+   *  saw when they released the drag, so that's what should stay
+   *  on-screen. Absent for element picks. */
+  regionRect?: { x: number; y: number; w: number; h: number };
 }
 
 export interface Overlay {
@@ -77,6 +83,25 @@ export function createOverlay(): Overlay {
   }
   function reposition(): void {
     for (const state of frames.values()) {
+      const samePage = pageKeyOf(state.item.url) === currentPageKey();
+      if (!samePage) {
+        state.frameEl.style.display = 'none';
+        continue;
+      }
+      // Region picks: render the drawn rect directly. Doc-coords
+      // minus scroll so the frame tracks scroll natively.
+      if (state.item.regionRect) {
+        const rr = state.item.regionRect;
+        Object.assign(state.frameEl.style, {
+          display: 'block',
+          top: (rr.y - window.scrollY) + 'px',
+          left: (rr.x - window.scrollX) + 'px',
+          width: rr.w + 'px',
+          height: rr.h + 'px',
+        });
+        continue;
+      }
+      // Element picks: follow the live DOM node.
       if (!state.element || !state.element.isConnected) {
         state.frameEl.style.display = 'none';
         continue;

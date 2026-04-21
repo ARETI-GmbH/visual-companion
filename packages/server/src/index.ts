@@ -108,7 +108,10 @@ async function main(): Promise<void> {
         return;
       }
       if (ev.type !== 'pointer') return;
-      const p = ev.payload as PointerEventPayload & { kind?: 'element' | 'region' };
+      const p = ev.payload as PointerEventPayload & {
+        kind?: 'element' | 'region';
+        regionRect?: { x: number; y: number; w: number; h: number };
+      };
       let pathname = '';
       try { pathname = new URL(ev.url).pathname; } catch {}
       const preview = p.textContent
@@ -120,6 +123,7 @@ async function main(): Promise<void> {
         pathname: pathname || '/',
         selector: p.cssSelector,
         textPreview: preview,
+        regionRect: p.regionRect,
         payload: p,
       });
       syncBuffer();
