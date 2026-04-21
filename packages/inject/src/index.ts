@@ -7,6 +7,7 @@ import { attachNavigationHooks } from './navigation-hooks';
 import { unregisterExistingServiceWorkers } from './sw-cleanup';
 import { createOverlay } from './overlay';
 import { installPointer } from './pointer';
+import { handleEvaluate } from './evaluate';
 
 unregisterExistingServiceWorkers();
 
@@ -22,6 +23,7 @@ const dispatcher = new Dispatcher({
     else if (msg.type === 'scroll_to') document.querySelector(msg.selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     else if (msg.type === 'navigate') window.location.href = msg.url;
     else if (msg.type === 'reload') window.location.reload();
+    else if (msg.type === 'evaluate') handleEvaluate(dispatcher, msg);
   },
 });
 
