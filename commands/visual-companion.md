@@ -1,6 +1,6 @@
 ---
 description: Öffnet ein unified Chrome-App-Window mit Web-App + Claude-Session. Auto-startet Dev-Server wenn nötig.
-argument-hint: "[url]  (ohne Argument: auto-detect aus package.json scripts.dev oder .visual-companion.json)"
+argument-hint: "[url] [--dsp]  (--dsp = --dangerously-skip-permissions an Claude durchreichen)"
 allowed-tools: [Bash]
 ---
 
@@ -24,6 +24,9 @@ Das Script:
 3. Prüft ob die Ziel-URL erreichbar ist; wenn nicht, startet den Dev-Server automatisch (`npm run dev` o.ä.) und wartet bis der Port hochkommt
 4. Startet den Companion-Daemon (lokaler Port)
 5. Öffnet Chrome im App-Mode mit isoliertem Profil
+
+Flags:
+- `--dsp` oder `--dangerously-skip-permissions`: Claude im rechten Pane startet mit `--dangerously-skip-permissions`
 
 ## Fehlerbehandlung
 

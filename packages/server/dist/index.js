@@ -57,6 +57,7 @@ async function main() {
     const pty = registerPtyBridge(app, {
         cwd: cfg.cwd,
         companionPort: () => resolvedPort,
+        claudeArgs: cfg.claudeArgs,
     });
     registerMcpHandlers(app, { store, gateway, pty });
     // Profile dir for potential cleanup later

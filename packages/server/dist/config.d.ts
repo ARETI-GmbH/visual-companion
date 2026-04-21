@@ -4,5 +4,6 @@ export interface ServerConfig {
     cwd: string;
     shellDir: string;
     injectFile: string;
+    claudeArgs: string[];
 }
 export declare function getConfigFromEnv(): ServerConfig;

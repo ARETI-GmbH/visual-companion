@@ -59,7 +59,13 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
   // Without +x, posix_spawnp fails for every child — including claude itself.
   ensureSpawnHelperExecutable(nodeModulesDir);
 
-  // 2. Resolve URL
+  // 2. Parse flags + resolve URL
+  const claudeArgs = [];
+  if (argv.some((a) => a === '--dsp' || a === '--dangerously-skip-permissions')) {
+    claudeArgs.push('--dangerously-skip-permissions');
+    console.log('visual-companion: claude will run with --dangerously-skip-permissions');
+  }
+
   let explicitUrl = argv.find((a) => !a.startsWith('--'));
   let hintedUrl = explicitUrl || autoDetectUrl(cwd); // best-effort guess
   const devCommand = detectDevCommand(cwd);
@@ -128,6 +134,7 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
     VISUAL_COMPANION_INJECT_FILE: injectFile,
   };
   if (devServerPid) serverEnv.VISUAL_COMPANION_DEV_PID = String(devServerPid);
+  if (claudeArgs.length) serverEnv.VISUAL_COMPANION_CLAUDE_ARGS = claudeArgs.join(' ');
 
   // Redirect daemon stdout/stderr to a log file so we can diagnose issues
   // after launch.js detaches. Log path is exposed via the daemon's /health.

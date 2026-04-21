@@ -63,6 +63,7 @@ async function main(): Promise<void> {
   const pty = registerPtyBridge(app, {
     cwd: cfg.cwd,
     companionPort: () => resolvedPort,
+    claudeArgs: cfg.claudeArgs,
   });
 
   registerMcpHandlers(app, { store, gateway, pty });
