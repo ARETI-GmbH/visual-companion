@@ -17,12 +17,11 @@ Beim ersten Aufruf von `/visual-companion` installiert das Plugin automatisch se
 ## Usage
 
 ```
-/visual-companion                            # Auto-detect aus package.json scripts.dev
+/visual-companion                            # Standard: aktuelle Konversation übernehmen, alte Terminal-Session wird geschlossen
 /visual-companion http://localhost:3000      # Explizite URL
-/visual-companion --dsp                      # Claude startet mit --dangerously-skip-permissions
-/visual-companion -c                         # Letzte Claude-Session fortsetzen (alte Terminal-Session vorher schließen!)
+/visual-companion --new                      # Frische Claude-Session, alte Terminal-Session bleibt offen
 /visual-companion --resume <session-id>      # Spezifische Session
-/visual-companion http://localhost:3000 --dsp -c
+/visual-companion --dsp                      # Claude im Chrome-Fenster mit --dangerously-skip-permissions
 /visual-companion-stop                       # Beendet alle Daemons + Chrome-Windows (z.B. nach Plugin-Update)
 ```
 

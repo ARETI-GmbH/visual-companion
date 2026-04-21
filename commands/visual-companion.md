@@ -1,6 +1,6 @@
 ---
-description: Öffnet ein unified Chrome-App-Window mit Web-App + Claude-Session. Auto-startet Dev-Server wenn nötig.
-argument-hint: "[url] [--dsp] [-c | --resume <id>]  (-c = letzte Claude-Session fortsetzen; --dsp = --dangerously-skip-permissions)"
+description: Öffnet ein unified Chrome-App-Window mit Web-App + Claude-Session. Übernimmt standardmäßig die aktuelle Konversation und schließt die alte Terminal-Session.
+argument-hint: "[url] [--new] [--dsp]  (Standard: aktuelle Session weiterführen; --new für frische Session)"
 allowed-tools: [Bash]
 ---
 
@@ -25,10 +25,14 @@ Das Script:
 4. Startet den Companion-Daemon (lokaler Port)
 5. Öffnet Chrome im App-Mode mit isoliertem Profil
 
+Standardverhalten:
+- Die neue Claude-Session im Chrome-Window übernimmt die aktuelle Konversation (`claude --continue`).
+- Die äußere Terminal-Claude-Session wird nach dem Launch automatisch per SIGTERM geschlossen, damit du nicht zwei konkurrierende Sessions mit derselben History hast.
+
 Flags:
+- `--new` oder `--fresh`: Frische Claude-Session im Chrome-Window starten und die alte Terminal-Session **offen lassen** (z.B. wenn du parallel arbeiten willst).
+- `-r <id>` oder `--resume <id>`: Eine spezifische Claude-Session per ID fortsetzen (anstelle von `--continue`).
 - `--dsp` oder `--dangerously-skip-permissions`: Claude im rechten Pane startet mit `--dangerously-skip-permissions`.
-- `-c` oder `--continue`: Die neue Claude-Session im Chrome-Window setzt die letzte gespeicherte Konversation fort. **Wichtig:** Die äußere Terminal-Session nicht gleichzeitig weiter benutzen — zwei Claude-Prozesse, die in dieselbe Session schreiben, verursachen Race-Conditions.
-- `-r <id>` oder `--resume <id>`: Eine spezifische Claude-Session per ID fortsetzen.
 
 ## Fehlerbehandlung
 

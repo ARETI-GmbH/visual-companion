@@ -18,7 +18,7 @@
  *  5. Exit (daemon keeps running, self-shutdown via 60s watchdog)
  */
 
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn, spawnSync, execSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -70,20 +70,13 @@ const DEV_STDOUT_BUFFER = { text: '' };
     claudeArgs.push('--dangerously-skip-permissions');
     console.log('visual-companion: claude will run with --dangerously-skip-permissions');
   }
-  if (argv.some((a) => a === '-c' || a === '--continue')) {
-    claudeArgs.push('--continue');
-    console.log(
-      'visual-companion: claude will resume the last conversation (--continue).',
-    );
-    console.log(
-      '  IMPORTANT: close your *outer* Claude Code terminal before typing into the new window.',
-    );
-    console.log(
-      '  Two Claude processes on the same session will race on conversation writes.',
-    );
-  }
+
+  // Default: take over the user's current claude conversation. Skipped
+  // only when the user explicitly asks for a fresh session.
+  const wantsFresh = argv.includes('--new') || argv.includes('--fresh');
   const resumeIdx = argv.findIndex((a) => a === '-r' || a === '--resume');
-  if (resumeIdx >= 0) {
+  const wantsResume = resumeIdx >= 0;
+  if (wantsResume) {
     const id = argv[resumeIdx + 1];
     if (!id || id.startsWith('-')) {
       console.error(
@@ -92,8 +85,16 @@ const DEV_STDOUT_BUFFER = { text: '' };
       process.exit(1);
     }
     claudeArgs.push('--resume', id);
-    console.log(`visual-companion: claude will resume session ${id}.`);
+    console.log(`visual-companion: resuming session ${id}.`);
+  } else if (!wantsFresh) {
+    claudeArgs.push('--continue');
+    console.log(
+      'visual-companion: continuing your current conversation (--continue). Use --new for a fresh session.',
+    );
+  } else {
+    console.log('visual-companion: starting a fresh claude session (--new).');
   }
+  const shouldCloseOuterClaude = !wantsFresh;
 
   // Strip flag arguments from positional URL detection.
   const positional = argv.filter((a, i) => {
@@ -197,7 +198,21 @@ const DEV_STDOUT_BUFFER = { text: '' };
         server.stdout.pipe(fs.createWriteStream(logPath, { flags: 'a' }));
       } catch {}
       server.unref();
-      setTimeout(() => process.exit(0), 200);
+      setTimeout(() => {
+        // Close the outer claude so the user doesn't end up with two
+        // windows running against the same session. Default behavior
+        // unless /visual-companion --new was used.
+        if (shouldCloseOuterClaude) {
+          const outerPid = findOuterClaudePid();
+          if (outerPid) {
+            console.log(
+              `visual-companion: closing outer claude (pid ${outerPid}) — use Cmd+W if your terminal doesn't auto-close.`,
+            );
+            try { process.kill(outerPid, 'SIGTERM'); } catch {}
+          }
+        }
+        process.exit(0);
+      }, 300);
     }
   });
   server.on('exit', (code) => {
@@ -212,6 +227,30 @@ const DEV_STDOUT_BUFFER = { text: '' };
 });
 
 // --- helpers -------------------------------------------------------------
+
+/**
+ * Find the PID of the claude process that launched us (via a slash-command
+ * → bash subshell → node launch.js chain). Walks up the process tree until
+ * we find a binary called `claude`; returns 0 if nothing matching is found.
+ */
+function findOuterClaudePid() {
+  try {
+    // process.ppid is the bash subshell. Walk up twice to be robust to
+    // extra wrappers (sh, script, tee, …).
+    let pid = process.ppid;
+    for (let hop = 0; hop < 4; hop++) {
+      const parent = parseInt(
+        execSync(`ps -o ppid= -p ${pid}`, { encoding: 'utf8', timeout: 2000 }).trim(),
+        10,
+      );
+      if (!parent || parent === 1 || parent === pid) break;
+      const name = execSync(`ps -o command= -p ${parent}`, { encoding: 'utf8', timeout: 2000 }).trim();
+      if (/(^|\/)claude(\s|$)/.test(name)) return parent;
+      pid = parent;
+    }
+  } catch {}
+  return 0;
+}
 
 function launchChrome(port, serverPid, upstreamUrl) {
   const profileDir = `/tmp/visual-companion-${serverPid}`;
