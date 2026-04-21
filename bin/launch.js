@@ -124,11 +124,17 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
   };
   if (devServerPid) serverEnv.VISUAL_COMPANION_DEV_PID = String(devServerPid);
 
+  // Redirect daemon stdout/stderr to a log file so we can diagnose issues
+  // after launch.js detaches. Log path is exposed via the daemon's /health.
+  const logPath = `/tmp/visual-companion-${process.pid}.log`;
+  const logFd = fs.openSync(logPath, 'a');
+  // stdin ignored, stdout piped (so we can read READY), stderr to log
   const server = spawn(process.execPath, [serverEntry], {
     detached: true,
-    stdio: ['ignore', 'pipe', 'inherit'],
-    env: serverEnv,
+    stdio: ['ignore', 'pipe', logFd],
+    env: { ...serverEnv, VISUAL_COMPANION_LOG_PATH: logPath },
   });
+  console.log(`visual-companion: daemon log → ${logPath}`);
 
   let bufferedOut = '';
   server.stdout.on('data', (chunk) => {
@@ -137,8 +143,12 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
     if (m) {
       const port = m[1];
       launchChrome(port, server.pid, url);
+      // Redirect future stdout to the log file so the daemon never blocks
+      // on a full pipe and we retain post-READY diagnostics.
       server.stdout.removeAllListeners('data');
-      try { server.stdout.destroy(); } catch {}
+      try {
+        server.stdout.pipe(fs.createWriteStream(logPath, { flags: 'a' }));
+      } catch {}
       server.unref();
       setTimeout(() => process.exit(0), 200);
     }

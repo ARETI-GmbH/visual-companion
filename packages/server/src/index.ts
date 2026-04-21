@@ -32,6 +32,10 @@ async function main(): Promise<void> {
       root: cfg.shellDir,
       prefix: '/window/',
       index: ['window.html'],
+      setHeaders: (res) => {
+        // Shell bundle changes when we release — never let Chrome cache it.
+        res.setHeader('cache-control', 'no-store, must-revalidate');
+      },
     });
   }
 
