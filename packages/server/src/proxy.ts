@@ -125,25 +125,101 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
   });
 }
 
+type HttpUpgradeLike = {
+  listeners: (evt: string) => Function[];
+  removeAllListeners: (evt: string) => void;
+  on: (evt: string, cb: (...args: any[]) => void) => void;
+};
+
+/**
+ * Own the http server's 'upgrade' event entirely. Node's EventEmitter has
+ * no stopPropagation, so when fastify-websocket ALSO has a listener both
+ * fire on every upgrade — fastify destroys unknown paths' sockets while
+ * we're still piping to them, producing "Invalid WebSocket frame" crashes.
+ *
+ * Fix: snapshot any pre-existing upgrade listeners (fastify-websocket's is
+ * there because websocket.ts / pty-bridge.ts registered /_companion/* WS
+ * routes), remove them, and attach a single router that dispatches:
+ *   - /_companion/* → call the captured fastify-websocket handler(s)
+ *   - anything else → raw-socket proxy to upstream
+ *
+ * Without this, Vite/webpack HMR WS attempts get a 404 from fastify,
+ * Vite's client falls back to HTTP-polling /__vite_ping, sees 200
+ * (because HTTP still works through the proxy), thinks "server came
+ * back" and calls location.reload() — producing the infinite flicker
+ * → gray-out loop the user saw in v0.3.12.
+ */
 export function attachWebSocketProxy(
-  _httpServer: { on: (evt: string, cb: (...args: any[]) => void) => void },
-  _targetOrigin: string,
+  httpServer: HttpUpgradeLike,
+  targetOrigin: string,
 ): void {
-  // WS forwarding disabled. Crashed Vite's HMR receiver with
-  //   RangeError: Invalid WebSocket frame: invalid status code 22418
-  // The crash took the whole dev server down, leaving the iframe with
-  // ECONNREFUSED on what looked like a running Vite. Two handlers —
-  // fastify-websocket (for /_companion/*) and ours (everything else)
-  // — were both firing on the http.Server 'upgrade' event and racing
-  // on the same socket. Until we replace this with a router that
-  // owns the upgrade event cleanly, it's safer not to forward WS at
-  // all.
-  //
-  // Trade-off: dev-server HMR doesn't run through the iframe. That's
-  // compensated by the file-watcher in index.ts which hard-reloads
-  // the iframe on source changes — same end result, slightly less
-  // snappy than true HMR.
-  return;
+  const target = new URL(targetOrigin);
+  const upstreamPort = parseInt(
+    target.port || (target.protocol === 'https:' ? '443' : '80'),
+    10,
+  );
+  const upstreamHost = target.hostname;
+
+  const existing = httpServer.listeners('upgrade').slice();
+  httpServer.removeAllListeners('upgrade');
+
+  httpServer.on('upgrade', (req: IncomingMessage, clientSocket: Duplex, head: Buffer) => {
+    const url = req.url ?? '';
+    if (url.startsWith('/_companion/')) {
+      for (const fn of existing) {
+        try { (fn as any)(req, clientSocket, head); } catch { /* defensive */ }
+      }
+      return;
+    }
+    proxyUpgrade(req, clientSocket, head, upstreamHost, upstreamPort, target.host);
+  });
+}
+
+function proxyUpgrade(
+  req: IncomingMessage,
+  clientSocket: Duplex,
+  head: Buffer,
+  upstreamHost: string,
+  upstreamPort: number,
+  upstreamHostHeader: string,
+): void {
+  // Dual-stack connect for upstream. Dev servers may bind IPv4-only
+  // (127.0.0.1) or IPv6-only (::1); autoSelectFamily races both and
+  // keeps the first one that answers.
+  const upstream = net.connect({
+    host: upstreamHost,
+    port: upstreamPort,
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 500,
+  } as any);
+
+  const cleanup = () => {
+    try { upstream.destroy(); } catch {}
+    try { (clientSocket as any).destroy?.(); } catch {}
+  };
+
+  upstream.on('error', cleanup);
+  clientSocket.on('error', cleanup);
+
+  upstream.once('connect', () => {
+    const lines: string[] = [];
+    lines.push(`${req.method} ${req.url} HTTP/${req.httpVersion}`);
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue;
+      const lower = key.toLowerCase();
+      if (lower === 'host') {
+        lines.push(`Host: ${upstreamHostHeader}`);
+        continue;
+      }
+      const vals = Array.isArray(value) ? value : [value];
+      for (const v of vals) lines.push(`${key}: ${v}`);
+    }
+    upstream.write(lines.join('\r\n') + '\r\n\r\n');
+    if (head && head.length) upstream.write(head);
+
+    upstream.pipe(clientSocket);
+    clientSocket.pipe(upstream);
+  });
 }
 
 export function stripFrameAncestors(cspValue: string): string {

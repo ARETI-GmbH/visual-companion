@@ -4,9 +4,30 @@ export interface ProxyOptions {
     injectScriptTag?: string;
 }
 export declare function registerProxy(app: FastifyInstance, opts: ProxyOptions): Promise<void>;
-export declare function attachWebSocketProxy(_httpServer: {
+type HttpUpgradeLike = {
+    listeners: (evt: string) => Function[];
+    removeAllListeners: (evt: string) => void;
     on: (evt: string, cb: (...args: any[]) => void) => void;
-}, _targetOrigin: string): void;
+};
+/**
+ * Own the http server's 'upgrade' event entirely. Node's EventEmitter has
+ * no stopPropagation, so when fastify-websocket ALSO has a listener both
+ * fire on every upgrade — fastify destroys unknown paths' sockets while
+ * we're still piping to them, producing "Invalid WebSocket frame" crashes.
+ *
+ * Fix: snapshot any pre-existing upgrade listeners (fastify-websocket's is
+ * there because websocket.ts / pty-bridge.ts registered /_companion/* WS
+ * routes), remove them, and attach a single router that dispatches:
+ *   - /_companion/* → call the captured fastify-websocket handler(s)
+ *   - anything else → raw-socket proxy to upstream
+ *
+ * Without this, Vite/webpack HMR WS attempts get a 404 from fastify,
+ * Vite's client falls back to HTTP-polling /__vite_ping, sees 200
+ * (because HTTP still works through the proxy), thinks "server came
+ * back" and calls location.reload() — producing the infinite flicker
+ * → gray-out loop the user saw in v0.3.12.
+ */
+export declare function attachWebSocketProxy(httpServer: HttpUpgradeLike, targetOrigin: string): void;
 export declare function stripFrameAncestors(cspValue: string): string;
 /**
  * Rewrite a Location header so absolute upstream URLs are replaced with
@@ -19,3 +40,4 @@ export declare function stripFrameAncestors(cspValue: string): string;
  */
 export declare function rewriteLocation(loc: string, targetOrigin: string): string;
 export declare function injectScript(html: string, scriptTag: string): string;
+export {};
