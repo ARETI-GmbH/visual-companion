@@ -6,3 +6,8 @@ build/
 .env
 .env.local
 *.log
+coverage/
+*.tsbuildinfo
+.vitest-cache/
+test-results/
+playwright-report/
