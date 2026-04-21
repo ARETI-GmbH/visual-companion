@@ -334,6 +334,11 @@ function findOwnTty() {
  */
 function findTerminalAppForTty(tty) {
   if (process.platform !== 'darwin') return null;
+  // NB: `try … on error … end try` — the previous variant had a
+  // dangling `return` after `end try` which AppleScript parses as a
+  // top-level syntax error (-2740) and the whole probe silently
+  // returned nothing, so we'd conclude "no terminal app" and leave
+  // the window open.
   const terminalAppProbe = `
     try
       tell application "Terminal"
@@ -344,8 +349,10 @@ function findTerminalAppForTty(tty) {
           end repeat
         end repeat
       end tell
+      return ""
+    on error
+      return ""
     end try
-    return ""
   `;
   const iTermProbe = `
     try
@@ -359,8 +366,10 @@ function findTerminalAppForTty(tty) {
           end repeat
         end repeat
       end tell
+      return ""
+    on error
+      return ""
     end try
-    return ""
   `;
   for (const script of [terminalAppProbe, iTermProbe]) {
     try {
@@ -397,8 +406,10 @@ function closeTerminalTabByTty(tty, app) {
             end repeat
           end repeat
         end tell
+        return ""
+      on error
+        return ""
       end try
-      return ""
     `;
   } else if (app === 'iTerm') {
     script = `
@@ -415,8 +426,10 @@ function closeTerminalTabByTty(tty, app) {
             end repeat
           end repeat
         end tell
+        return ""
+      on error
+        return ""
       end try
-      return ""
     `;
   } else {
     return;

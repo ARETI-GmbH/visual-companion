@@ -231,8 +231,13 @@ main().catch((err) => {
  * want to reload on (node_modules, build output, version control) are
  * filtered by filename regex — cheaper and enough for our use.
  */
-const IGNORE = /(^|[\/\\])(node_modules|\.git|\.next|\.turbo|\.cache|\.svelte-kit|dist|build|out|coverage|\.DS_Store)([\/\\]|$)/;
-const IGNORE_TAIL = /(\.swp|\.swx|~|\.tmp)$/;
+const IGNORE = /(^|[\/\\])(node_modules|\.git|\.next|\.nuxt|\.vite|\.turbo|\.cache|\.parcel-cache|\.svelte-kit|\.astro|\.remix|\.rollup\.cache|\.DS_Store|dist|build|out|coverage|tmp)([\/\\]|$)/;
+const IGNORE_TAIL = /(\.swp|\.swx|~|\.tmp|\.log|\.lock|\.tsbuildinfo)$/;
+// Even if the ignore list misses something, never broadcast reloads
+// more frequently than this window — kills the "dev server writes
+// cache → watcher fires → reload → dev server rebuilds → writes cache
+// → reload" loop that crashed Vite's HMR in user reports.
+const MIN_RELOAD_INTERVAL_MS = 5000;
 /**
  * Open a new terminal window in `cwd` and start `claude --continue`.
  * Called during shutdown when the outer claude had been closed on launch;
@@ -255,6 +260,7 @@ function spawnReturnTerminal(app, cwd) {
           activate
           do script ${JSON.stringify(cmd)}
         end tell
+      on error
       end try
     `;
     }
@@ -268,6 +274,7 @@ function spawnReturnTerminal(app, cwd) {
             write text ${JSON.stringify(cmd)}
           end tell
         end tell
+      on error
       end try
     `;
     }
@@ -284,6 +291,7 @@ function spawnReturnTerminal(app, cwd) {
 function startFileWatcher(cwd, onQuiet) {
     let timer = null;
     let watcher = null;
+    let lastReloadAt = 0;
     try {
         watcher = fsWatch(cwd, { recursive: true }, (_event, filename) => {
             if (!filename)
@@ -295,6 +303,12 @@ function startFileWatcher(cwd, onQuiet) {
                 clearTimeout(timer);
             timer = setTimeout(() => {
                 timer = null;
+                const now = Date.now();
+                if (now - lastReloadAt < MIN_RELOAD_INTERVAL_MS) {
+                    process.stderr.write(`[vc] auto-reload: suppressed (last reload ${now - lastReloadAt}ms ago, min ${MIN_RELOAD_INTERVAL_MS}ms) — ${name}\n`);
+                    return;
+                }
+                lastReloadAt = now;
                 process.stderr.write(`[vc] auto-reload: file change (${name}) — broadcasting reload\n`);
                 try {
                     onQuiet();
