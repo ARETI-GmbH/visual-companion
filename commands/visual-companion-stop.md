@@ -1,27 +1,28 @@
 ---
-description: Beendet alle laufenden Visual-Companion-Daemons und Chrome-App-Windows. Nützlich nach Plugin-Updates.
+description: Beendet nur die Visual-Companion-Session des aktuellen Projekts. Mit --all auch alle anderen.
+argument-hint: "[--all]  (ohne Argument: nur aktuelles Projekt; --all: alle Sessions)"
 allowed-tools: [Bash]
 ---
 
 # /visual-companion-stop
 
-Räumt alle laufenden Visual-Companion-Prozesse ab:
-- Beendet jeden Companion-Daemon per SIGTERM (der Daemon killt seinen Dev-Server-Child selbst und löscht sein Chrome-Profile-Dir)
-- Beendet jedes Chrome-App-Window mit `--user-data-dir=/tmp/visual-companion-*`
-- Nach 2s Grace-Period werden Stragglers per SIGKILL beendet
+Räumt die Visual-Companion-Session des aktuellen Projekts ab — der Daemon wird per SIGTERM gestoppt, das zugehörige Chrome-App-Window geschlossen, der Dev-Server als Teil der Daemon-Shutdown-Logik beendet.
 
-**Lässt MCP-stdio-Prozesse (`mcp-entry.js`) in Ruhe** — die gehören der Claude-Session.
+**Standard: Isoliert pro Projekt.** Andere laufende Companion-Sessions (aus anderen Claude-Fenstern, anderen Projekten) bleiben unberührt. Das macht paralleles Arbeiten in mehreren Projekten sicher.
+
+Mit `--all` werden alle laufenden Companion-Sessions auf dem Rechner gestoppt — z.B. nach einem Plugin-Update, wenn alle Instanzen frisch neu starten sollen.
 
 ## Ablauf
 
-Führe **genau einen** Bash-Aufruf aus:
+Führe **genau einen** Bash-Aufruf aus — das Arg `$ARGUMENTS` gibt `--all` durch, wenn gesetzt:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/stop.js"
+node "${CLAUDE_PLUGIN_ROOT}/bin/stop.js" $ARGUMENTS
 ```
 
-## Typischer Workflow
+## Beispiele
 
-1. `/visual-companion-stop`   ← nach Plugin-Update, um stale Daemons zu killen
-2. Plugin-Update abschließen (`/plugins` → Update)
-3. `/visual-companion`   ← spawnt einen frischen Daemon aus dem neuen Cache
+```
+/visual-companion-stop          # nur die Session dieses Projekts stoppen
+/visual-companion-stop --all    # alle Companion-Sessions auf dem Rechner stoppen
+```

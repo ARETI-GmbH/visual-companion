@@ -2,21 +2,50 @@
 /**
  * /visual-companion-stop entry point.
  *
- * Finds and terminates every running companion daemon and its isolated
- * Chrome-app window. Useful after a plugin update so the next
- * /visual-companion call spawns a fresh daemon from the updated cache.
+ * Default: stops only the companion session tied to the current working
+ * directory — exactly the project the user is asking from. Every other
+ * session (different project, different claude window) is left alone.
  *
- * Kills in two waves:
- *  1. SIGTERM everything — daemons cleanly close Fastify, kill the
- *     dev-server child (via VISUAL_COMPANION_DEV_PID), and remove the
- *     Chrome profile dir. Chrome itself exits when its top process dies.
- *  2. After a short grace period, SIGKILL anything still alive.
+ * Pass `--all` to stop every running companion on the machine.
  *
- * MCP stdio processes (`mcp-entry.js`) are intentionally left alone —
- * those are controlled by the Claude CLI, not by the companion window.
+ * Each launch.js writes a state file under
+ *   /tmp/visual-companion-state-<daemonPid>.json
+ * with { daemonPid, devServerPid, cwd, chromeProfileDir, … }. We read
+ * those and only touch the matching daemon's daemon process + chrome
+ * window. MCP stdio processes (`mcp-entry.js`) are owned by the Claude
+ * CLI and never killed here.
  */
 
 const { execSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+function readStateFiles() {
+  let entries;
+  try {
+    entries = fs.readdirSync('/tmp');
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of entries) {
+    if (!/^visual-companion-state-\d+\.json$/.test(name)) continue;
+    const file = path.join('/tmp', name);
+    try {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (typeof data.daemonPid === 'number') {
+        out.push({ file, ...data });
+      }
+    } catch {
+      // stale / corrupt, skip
+    }
+  }
+  return out;
+}
+
+function isAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
 
 function ps() {
   try {
@@ -26,26 +55,24 @@ function ps() {
   }
 }
 
-function scan(psOut) {
-  const daemons = [];
-  const chromes = [];
-  for (const line of psOut.split('\n')) {
+function chromePidsForProfile(profileDir) {
+  if (!profileDir) return [];
+  const pids = [];
+  for (const line of ps().split('\n')) {
     const m = line.match(/^\s*(\d+)\s+(.*)$/);
     if (!m) continue;
     const pid = parseInt(m[1], 10);
-    const cmd = m[2];
     if (pid === process.pid) continue;
-    if (/\bnode\b/.test(cmd) && /visual-companion.*packages\/server\/dist\/index\.js/.test(cmd)) {
-      daemons.push({ pid, cmd });
-    } else if (/Google Chrome/.test(cmd) && /--user-data-dir=\/tmp\/visual-companion-/.test(cmd)) {
-      chromes.push({ pid, cmd });
+    const cmd = m[2];
+    if (/Google Chrome/.test(cmd) && cmd.includes(`--user-data-dir=${profileDir}`)) {
+      pids.push(pid);
     }
   }
-  return { daemons, chromes };
+  return pids;
 }
 
-function killAll(list, signal) {
-  for (const { pid } of list) {
+function killAll(pids, signal) {
+  for (const pid of pids) {
     try { process.kill(pid, signal); } catch {}
   }
 }
@@ -53,40 +80,82 @@ function killAll(list, signal) {
 function wait(ms) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
-    // spin-wait is fine here, we only wait ~2s total
     try { execSync('sleep 0.1'); } catch {}
   }
 }
 
 (function main() {
-  const initial = scan(ps());
-  const total = initial.daemons.length + initial.chromes.length;
-  if (total === 0) {
+  const wantAll = process.argv.includes('--all');
+  const cwd = process.cwd();
+  const states = readStateFiles().filter((s) => isAlive(s.daemonPid));
+
+  if (states.length === 0) {
     console.log('visual-companion-stop: nothing running.');
     return;
   }
 
+  const targets = wantAll ? states : states.filter((s) => s.cwd === cwd);
+  const others = states.filter((s) => !targets.includes(s));
+
+  if (targets.length === 0) {
+    console.log(`visual-companion-stop: no session in ${cwd}.`);
+    if (others.length) {
+      console.log(`  ${others.length} other session(s) running:`);
+      for (const s of others) {
+        console.log(`    - daemon pid=${s.daemonPid} cwd=${s.cwd}`);
+      }
+      console.log('  run `/visual-companion-stop --all` to stop everything.');
+    }
+    return;
+  }
+
   console.log(
-    `visual-companion-stop: stopping ${initial.daemons.length} daemon(s) ` +
-      `and ${initial.chromes.length} chrome window(s).`,
+    `visual-companion-stop: stopping ${targets.length} session(s)${wantAll ? ' (--all)' : ''}.`,
   );
-  for (const d of initial.daemons) console.log(`  daemon  pid=${d.pid}`);
-  for (const c of initial.chromes) console.log(`  chrome  pid=${c.pid}`);
+  if (others.length && !wantAll) {
+    console.log(
+      `  leaving ${others.length} other session(s) untouched (use --all to include them).`,
+    );
+  }
 
-  killAll(initial.daemons, 'SIGTERM');
-  killAll(initial.chromes, 'SIGTERM');
+  const allChromePids = [];
+  for (const t of targets) {
+    const chromePids = chromePidsForProfile(t.chromeProfileDir);
+    console.log(
+      `  daemon pid=${t.daemonPid} cwd=${t.cwd}  (${chromePids.length} chrome pid(s))`,
+    );
+    try { process.kill(t.daemonPid, 'SIGTERM'); } catch {}
+    allChromePids.push(...chromePids);
+  }
+  killAll(allChromePids, 'SIGTERM');
 
-  // Give daemons up to 2s to run their shutdown() (dev-server kill, rmSync)
+  // Give daemons ~2s to run their shutdown (removes state file, kills
+  // dev server, runs reverse-transform if applicable).
   wait(2000);
 
-  const remaining = scan(ps());
-  if (remaining.daemons.length || remaining.chromes.length) {
+  const stragglerDaemons = targets
+    .filter((t) => isAlive(t.daemonPid))
+    .map((t) => t.daemonPid);
+  const stragglerChromes = [];
+  for (const t of targets) {
+    for (const pid of chromePidsForProfile(t.chromeProfileDir)) {
+      if (isAlive(pid)) stragglerChromes.push(pid);
+    }
+  }
+  if (stragglerDaemons.length || stragglerChromes.length) {
     console.log(
-      `visual-companion-stop: ${remaining.daemons.length + remaining.chromes.length} ` +
-        `process(es) still alive, sending SIGKILL.`,
+      `visual-companion-stop: ${
+        stragglerDaemons.length + stragglerChromes.length
+      } straggler(s) — sending SIGKILL.`,
     );
-    killAll(remaining.daemons, 'SIGKILL');
-    killAll(remaining.chromes, 'SIGKILL');
+    killAll(stragglerDaemons, 'SIGKILL');
+    killAll(stragglerChromes, 'SIGKILL');
+  }
+
+  // Delete state files for daemons we stopped (daemons clean their
+  // own on graceful shutdown; this covers SIGKILL'd ones too).
+  for (const t of targets) {
+    try { fs.unlinkSync(t.file); } catch {}
   }
 
   console.log('visual-companion-stop: done.');

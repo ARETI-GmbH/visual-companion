@@ -179,6 +179,9 @@ async function main(): Promise<void> {
     try { stopFileWatcher(); } catch {}
     try { await app.close(); } catch {}
     try { rmSync(profileDir, { recursive: true, force: true }); } catch {}
+    // Clean our own state file so stop.js's per-session listing
+    // stays accurate.
+    try { rmSync(`/tmp/visual-companion-state-${process.pid}.json`, { force: true }); } catch {}
     // Reverse transform: if this daemon was started as a carry-over
     // (the user's outer claude was replaced by the companion window),
     // now that the window is going away we re-open a terminal at the

@@ -201,6 +201,24 @@ const DEV_STDOUT_BUFFER = { text: '' };
   });
   console.log(`visual-companion: daemon log → ${logPath}`);
 
+  // State file keyed by daemon pid — lets /visual-companion-stop
+  // target the *right* session when multiple companions are running
+  // across different projects. Without this, stop.js used to ps-scan
+  // and kill every VC daemon on the machine.
+  const stateFile = `/tmp/visual-companion-state-${server.pid}.json`;
+  try {
+    fs.writeFileSync(stateFile, JSON.stringify({
+      daemonPid: server.pid,
+      devServerPid: devServerPid ?? null,
+      cwd,
+      url,
+      chromeProfileDir: `/tmp/visual-companion-${server.pid}`,
+      launchedAt: Date.now(),
+    }, null, 2));
+  } catch {
+    // not fatal — stop.js still has ps-scan as a legacy fallback
+  }
+
   let bufferedOut = '';
   server.stdout.on('data', (chunk) => {
     bufferedOut += chunk.toString();
