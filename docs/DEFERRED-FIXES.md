@@ -23,6 +23,11 @@ Issues flagged during phase reviews that are not blocking MVP but should be addr
 - **M5 — Test coverage for CSP report-only, gzip, redirect branches**.
 - **M7 — stripFrameAncestors empty-result guard**: already implemented (`if (filtered)`) — add a test to pin behavior.
 
+## Bootstrap (Phase 4)
+
+- **Static shell 404 on `/window/`**: `@fastify/static` doesn't auto-resolve `index.html` when the file is named `window.html`. Options: (a) rename `window.html` → `index.html` in shell build, (b) redirect `/` to `/window/window.html`, (c) pass `index: ['window.html']` to `app.register(fastifyStatic, ...)`. Will surface when testing the Chrome App mode window. Recommendation: option (a) during Phase 8.
+- **@fastify/static transitive audit findings**: 5 vulns (3 high, 2 critical) from dep chain. Re-evaluate after a dep-audit pass.
+
 ## Plan doc corrections
 
 - **Task 7** should not claim tests are "already passing from Task 6" — the test file is created in Task 6 but the injection tests need Task 6's implementation too. Merge Task 6+7 in the next plan revision.
