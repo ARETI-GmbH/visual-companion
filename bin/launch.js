@@ -70,8 +70,38 @@ const DEV_STDOUT_BUFFER = { text: '' };
     claudeArgs.push('--dangerously-skip-permissions');
     console.log('visual-companion: claude will run with --dangerously-skip-permissions');
   }
+  if (argv.some((a) => a === '-c' || a === '--continue')) {
+    claudeArgs.push('--continue');
+    console.log(
+      'visual-companion: claude will resume the last conversation (--continue).',
+    );
+    console.log(
+      '  IMPORTANT: close your *outer* Claude Code terminal before typing into the new window.',
+    );
+    console.log(
+      '  Two Claude processes on the same session will race on conversation writes.',
+    );
+  }
+  const resumeIdx = argv.findIndex((a) => a === '-r' || a === '--resume');
+  if (resumeIdx >= 0) {
+    const id = argv[resumeIdx + 1];
+    if (!id || id.startsWith('-')) {
+      console.error(
+        'visual-companion: --resume needs a session id, e.g. /visual-companion --resume abc123.',
+      );
+      process.exit(1);
+    }
+    claudeArgs.push('--resume', id);
+    console.log(`visual-companion: claude will resume session ${id}.`);
+  }
 
-  let explicitUrl = argv.find((a) => !a.startsWith('--'));
+  // Strip flag arguments from positional URL detection.
+  const positional = argv.filter((a, i) => {
+    if (a.startsWith('-')) return false;
+    if (i > 0 && (argv[i - 1] === '-r' || argv[i - 1] === '--resume')) return false;
+    return true;
+  });
+  let explicitUrl = positional[0];
   let hintedUrl = explicitUrl || autoDetectUrl(cwd); // best-effort guess
   const devCommand = detectDevCommand(cwd);
   let url = null;

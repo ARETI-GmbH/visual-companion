@@ -1,6 +1,6 @@
 ---
 description: Öffnet ein unified Chrome-App-Window mit Web-App + Claude-Session. Auto-startet Dev-Server wenn nötig.
-argument-hint: "[url] [--dsp]  (--dsp = --dangerously-skip-permissions an Claude durchreichen)"
+argument-hint: "[url] [--dsp] [-c | --resume <id>]  (-c = letzte Claude-Session fortsetzen; --dsp = --dangerously-skip-permissions)"
 allowed-tools: [Bash]
 ---
 
@@ -26,7 +26,9 @@ Das Script:
 5. Öffnet Chrome im App-Mode mit isoliertem Profil
 
 Flags:
-- `--dsp` oder `--dangerously-skip-permissions`: Claude im rechten Pane startet mit `--dangerously-skip-permissions`
+- `--dsp` oder `--dangerously-skip-permissions`: Claude im rechten Pane startet mit `--dangerously-skip-permissions`.
+- `-c` oder `--continue`: Die neue Claude-Session im Chrome-Window setzt die letzte gespeicherte Konversation fort. **Wichtig:** Die äußere Terminal-Session nicht gleichzeitig weiter benutzen — zwei Claude-Prozesse, die in dieselbe Session schreiben, verursachen Race-Conditions.
+- `-r <id>` oder `--resume <id>`: Eine spezifische Claude-Session per ID fortsetzen.
 
 ## Fehlerbehandlung
 
