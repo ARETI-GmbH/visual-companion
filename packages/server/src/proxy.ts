@@ -1,8 +1,21 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { request as undiciRequest } from 'undici';
+import { Agent, request as undiciRequest } from 'undici';
 import net from 'node:net';
 import { IncomingMessage } from 'node:http';
 import { Duplex } from 'node:stream';
+
+// Dual-stack dispatcher: many dev servers bind only IPv4 (127.0.0.1)
+// while others bind only IPv6 (::1). Node's DNS for "localhost" on
+// macOS commonly returns ::1 first, so a v4-only server would ECONN-
+// REFUSE and a v6-only server would fail if we forced v4.
+// autoSelectFamily races A/AAAA lookups and uses whichever connects
+// first (RFC 8305 "Happy Eyeballs"). Available since Node 20.
+const dualStackAgent = new Agent({
+  connect: {
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 500,
+  },
+});
 
 export interface ProxyOptions {
   targetOrigin: string; // e.g. "http://localhost:3000"
@@ -34,14 +47,6 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
       return;
     }
     const upstreamUrl = new URL(rawPath, targetOrigin + '/');
-    // Force IPv4 loopback: `localhost` resolves to ::1 (IPv6) before
-    // 127.0.0.1 on most macOS systems, but many dev servers (Vite's
-    // default, next-turbopack in some configs) bind IPv4 only. Using
-    // 127.0.0.1 explicitly avoids a misleading ECONNREFUSED when the
-    // dev server is actually up.
-    if (upstreamUrl.hostname === 'localhost') {
-      upstreamUrl.hostname = '127.0.0.1';
-    }
     for (const [k, v] of Object.entries(req.query as Record<string, string>)) {
       upstreamUrl.searchParams.set(k, v);
     }
@@ -65,6 +70,10 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
         // UND_ERR_HEADERS_TIMEOUT 500 JSON in the iframe.
         headersTimeout: 10 * 60 * 1000,
         bodyTimeout: 10 * 60 * 1000,
+        // Happy-Eyeballs-ish connect: try IPv6 and IPv4 in parallel,
+        // use whichever answers first. Means "localhost" works whether
+        // the dev server binds 127.0.0.1, ::1, or both.
+        dispatcher: dualStackAgent,
       });
     } catch (err) {
       reply.status(502).type('text/html').send(upstreamErrorHtml(err, targetOrigin));
@@ -121,9 +130,7 @@ export function attachWebSocketProxy(
   targetOrigin: string,
 ): void {
   const target = new URL(targetOrigin);
-  // Same IPv4 pinning as the HTTP proxy, otherwise HMR WebSockets
-  // (Vite, Next Turbopack) fail exactly the same way.
-  const upstreamHost = target.hostname === 'localhost' ? '127.0.0.1' : target.hostname;
+  const upstreamHost = target.hostname;
   const upstreamPort = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -133,7 +140,15 @@ export function attachWebSocketProxy(
     if (req.url.startsWith('/_companion/') || req.url.startsWith('/window/')) return;
     const upstreamPath = req.url;
 
-    const upstreamSocket = net.connect(upstreamPort, upstreamHost, () => {
+    // Same dual-stack story as the HTTP side — let net.connect try
+    // both IPv6 and IPv4 for "localhost" and use the first that
+    // answers, so HMR WebSockets work on either family.
+    const upstreamSocket = net.connect({
+      host: upstreamHost,
+      port: upstreamPort,
+      autoSelectFamily: true,
+      autoSelectFamilyAttemptTimeout: 500,
+    } as any, () => {
       const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
       headers.host = target.host;
       const headerLines: string[] = [`${req.method} ${upstreamPath} HTTP/1.1`];

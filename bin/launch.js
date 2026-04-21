@@ -292,23 +292,31 @@ const DEV_STDOUT_BUFFER = { text: '' };
  */
 /**
  * Find the TTY path of the terminal tab that launched us
- * (e.g. "/dev/ttys003"). Used to target exactly that tab for close.
- * Returns null if we can't determine it (non-macOS, detached shells, …).
+ * (e.g. "/dev/ttys003"). Walks up the process tree because claude's
+ * slash-command bash subshell is often spawned without a controlling
+ * tty (ps shows "??" for it) — so we keep climbing until we reach
+ * claude / zsh / Terminal's shell, which do have a tty.
  */
 function findOwnTty() {
   try {
-    // launch.js's parent is bash (the slash-command subshell). Its tty
-    // is the terminal tab's tty.
-    const bashPid = process.ppid;
-    const tty = execSync(`ps -o tty= -p ${bashPid}`, {
-      encoding: 'utf8',
-      timeout: 1500,
-    }).trim();
-    if (!tty || tty === '??' || tty === '?') return null;
-    return '/dev/' + tty;
-  } catch {
-    return null;
-  }
+    let pid = process.ppid;
+    for (let hop = 0; hop < 8; hop++) {
+      const tty = execSync(`ps -o tty= -p ${pid}`, {
+        encoding: 'utf8',
+        timeout: 1500,
+      }).trim();
+      if (tty && tty !== '??' && tty !== '?') {
+        return tty.startsWith('/') ? tty : '/dev/' + tty;
+      }
+      const parent = parseInt(
+        execSync(`ps -o ppid= -p ${pid}`, { encoding: 'utf8', timeout: 1500 }).trim(),
+        10,
+      );
+      if (!parent || parent === 1 || parent === pid) break;
+      pid = parent;
+    }
+  } catch {}
+  return null;
 }
 
 /**
