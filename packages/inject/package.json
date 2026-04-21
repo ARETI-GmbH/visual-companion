@@ -1,0 +1,16 @@
+{
+  "name": "@areti-gmbh/visual-companion-inject",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.4"
+  }
+}
