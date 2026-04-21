@@ -11,7 +11,7 @@
       "name": "visual-companion",
       "description": "Startet ein unified Chrome-App-Window mit deiner Web-App links und Claude-Code-Session rechts. Alt+Click auf UI-Elemente → Claude bekommt sofort DOM-Kontext + Styles + Screenshot + Source-Map. Inkl. automatischem Dev-Server-Start.",
       "category": "development",
-      "source": ".",
+      "source": "./",
       "homepage": "https://github.com/ARETI-GmbH/visual-companion"
     }
   ]
