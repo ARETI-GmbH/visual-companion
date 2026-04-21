@@ -1,4 +1,5 @@
 import { Dispatcher } from './dispatcher';
+import { patchConsole } from './console-patch';
 
 const scriptTag = document.currentScript as HTMLScriptElement | null;
 const port = parseInt(scriptTag?.dataset.companionPort ?? '7777', 10);
@@ -10,5 +11,7 @@ const dispatcher = new Dispatcher({
     console.debug('[visual-companion] server msg:', msg);
   },
 });
+
+patchConsole(dispatcher);
 
 (window as any).__visualCompanion = { dispatcher };
