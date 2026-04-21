@@ -1,5 +1,8 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { request as undiciRequest } from 'undici';
+import net from 'node:net';
+import { IncomingMessage } from 'node:http';
+import { Duplex } from 'node:stream';
 
 export interface ProxyOptions {
   targetOrigin: string; // e.g. "http://localhost:3000"
@@ -51,6 +54,51 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
       const buf = Buffer.from(await upstreamResp.body.arrayBuffer());
       reply.send(buf);
     }
+  });
+
+  app.addHook('onReady', async () => {
+    attachWebSocketProxy(app.server, targetOrigin);
+  });
+}
+
+export function attachWebSocketProxy(
+  httpServer: { on: (evt: string, cb: (...args: any[]) => void) => void },
+  targetOrigin: string,
+): void {
+  const target = new URL(targetOrigin);
+  const upstreamHost = target.hostname;
+  const upstreamPort = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
+
+  httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (!req.url?.startsWith('/app/')) return;
+    const upstreamPath = req.url.slice('/app'.length) || '/';
+
+    const upstreamSocket = net.connect(upstreamPort, upstreamHost, () => {
+      const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
+      headers.host = target.host;
+      const headerLines: string[] = [`${req.method} ${upstreamPath} HTTP/1.1`];
+      for (const [k, v] of Object.entries(headers)) {
+        if (v === undefined) continue;
+        if (Array.isArray(v)) {
+          for (const item of v) headerLines.push(`${k}: ${item}`);
+        } else {
+          headerLines.push(`${k}: ${v}`);
+        }
+      }
+      upstreamSocket.write(headerLines.join('\r\n') + '\r\n\r\n');
+      if (head && head.length > 0) upstreamSocket.write(head);
+      upstreamSocket.pipe(socket);
+      socket.pipe(upstreamSocket);
+    });
+
+    const cleanup = () => {
+      socket.destroy();
+      upstreamSocket.destroy();
+    };
+    upstreamSocket.on('error', cleanup);
+    socket.on('error', cleanup);
+    upstreamSocket.on('close', () => socket.destroy());
+    socket.on('close', () => upstreamSocket.destroy());
   });
 }
 
