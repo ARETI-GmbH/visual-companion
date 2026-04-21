@@ -32,6 +32,12 @@ export interface Overlay {
   /** Re-run selector lookups against the current document. Call this
    *  after navigation or DOM-ready so frames re-attach on the new page. */
   refresh(): void;
+  /** Globally hide/show all selection frames without losing state.
+   *  Driven by claude's busy/idle signal — frames disappear while
+   *  claude is actively editing (HMR would make them flicker anyway)
+   *  and re-appear when the turn ends. Hover/region-drag overlays
+   *  are NOT affected; those reflect live user input in the iframe. */
+  setBusy(isBusy: boolean): void;
 }
 
 export function createOverlay(): Overlay {
@@ -61,6 +67,8 @@ export function createOverlay(): Overlay {
   const region = el('div', 'region'); region.style.display = 'none';
   shadow.append(hover, pulse, region);
 
+  let busy = false;
+
   interface FrameState {
     item: BufferItem;
     frameEl: HTMLElement;
@@ -83,6 +91,10 @@ export function createOverlay(): Overlay {
   }
   function reposition(): void {
     for (const state of frames.values()) {
+      if (busy) {
+        state.frameEl.style.display = 'none';
+        continue;
+      }
       const samePage = pageKeyOf(state.item.url) === currentPageKey();
       if (!samePage) {
         state.frameEl.style.display = 'none';
@@ -204,6 +216,18 @@ export function createOverlay(): Overlay {
     refresh() {
       for (const state of frames.values()) {
         state.element = resolveElement(state.item);
+      }
+      scheduleReposition();
+    },
+    setBusy(next) {
+      if (busy === next) return;
+      busy = next;
+      // Quick fade: on idle, let the selectors re-resolve against
+      // whatever HMR left behind before showing the frames again.
+      if (!busy) {
+        for (const state of frames.values()) {
+          state.element = resolveElement(state.item);
+        }
       }
       scheduleReposition();
     },

@@ -26,6 +26,7 @@ const dispatcher = new Dispatcher({
     else if (msg.type === 'reload') window.location.reload();
     else if (msg.type === 'evaluate') handleEvaluate(dispatcher, msg);
     else if (msg.type === 'buffer-update') overlay.setSelections(msg.items ?? []);
+    else if (msg.type === 'claude-activity') overlay.setBusy(!!msg.isBusy);
   },
 });
 

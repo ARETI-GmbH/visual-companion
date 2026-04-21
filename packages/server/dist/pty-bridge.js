@@ -157,6 +157,36 @@ export function registerPtyBridge(app, opts) {
     const REPLAY_MAX = 64 * 1024;
     let replayBuffer = '';
     let ptyOutputWired = false;
+    // Busy/idle detection: claude is "busy" any time the pty streams
+    // output; after IDLE_DEBOUNCE_MS of silence we call the change
+    // hook with idle=true. Threshold is ~450 ms — long enough to
+    // ignore the small bursts of cursor-repositioning Ink does while
+    // idle (keep-alive paints), short enough that overlays reappear
+    // almost immediately after claude finishes a reply.
+    const IDLE_DEBOUNCE_MS = 450;
+    let isBusy = false;
+    let idleTimer = null;
+    function markBusy() {
+        if (!isBusy) {
+            isBusy = true;
+            try {
+                opts.onActivityChange?.(true);
+            }
+            catch { }
+        }
+        if (idleTimer)
+            clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+            idleTimer = null;
+            if (isBusy) {
+                isBusy = false;
+                try {
+                    opts.onActivityChange?.(false);
+                }
+                catch { }
+            }
+        }, IDLE_DEBOUNCE_MS);
+    }
     function wirePtyOutput(pty) {
         if (ptyOutputWired)
             return;
@@ -166,6 +196,7 @@ export function registerPtyBridge(app, opts) {
             if (replayBuffer.length > REPLAY_MAX) {
                 replayBuffer = replayBuffer.slice(-REPLAY_MAX);
             }
+            markBusy();
             if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
                 currentSocket.send(JSON.stringify({ type: 'data', data }));
             }

@@ -4,6 +4,13 @@ export interface PtyBridgeOptions {
     companionPort: number | (() => number);
     shell?: string;
     claudeArgs?: string[];
+    /** Called when claude transitions between actively streaming output
+     *  (busy, e.g. typing a response / running a tool) and quiet
+     *  (idle, prompt ready). Used by the daemon to tell the inject
+     *  overlay to hide during claude's turn so the view isn't
+     *  constantly flickering as the iframe HMR-reloads from claude's
+     *  edits, and re-show when the turn is done. */
+    onActivityChange?: (isBusy: boolean) => void;
 }
 export interface PtyBridgeControl {
     /** Push `text` to the xterm display (visible to the user). Does NOT

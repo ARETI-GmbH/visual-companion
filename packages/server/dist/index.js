@@ -63,12 +63,14 @@ async function main() {
         store,
         onNewClient: () => {
             // Fresh connection (shell reload, inject reload after nav,
-            // plugin update) — replay the buffer so chips + overlays come
-            // back immediately without waiting for the next state change.
+            // plugin update) — replay buffer + current claude activity
+            // so chips and overlay-visibility come back in a consistent
+            // state without waiting for the next transition.
             gatewayRef?.broadcast({
                 type: 'buffer-update',
                 items: selectionBuffer.summaries(),
             });
+            gatewayRef?.broadcast({ type: 'claude-activity', isBusy: claudeIsBusy });
         },
         onEvent: (ev) => {
             if (ev.type === 'clear-selection') {
@@ -158,10 +160,15 @@ async function main() {
     // routes after the server is listening). companionPort is resolved
     // lazily at spawn time so we can pass the actual listening port.
     let resolvedPort = cfg.port;
+    let claudeIsBusy = false;
     const pty = registerPtyBridge(app, {
         cwd: cfg.cwd,
         companionPort: () => resolvedPort,
         claudeArgs: cfg.claudeArgs,
+        onActivityChange: (isBusy) => {
+            claudeIsBusy = isBusy;
+            gatewayRef?.broadcast({ type: 'claude-activity', isBusy });
+        },
     });
     ptyBridgeRef = pty;
     registerMcpHandlers(app, { store, gateway, pty, buffer: selectionBuffer });

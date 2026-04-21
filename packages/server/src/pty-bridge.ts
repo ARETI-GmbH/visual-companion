@@ -9,6 +9,13 @@ export interface PtyBridgeOptions {
   companionPort: number | (() => number);
   shell?: string;
   claudeArgs?: string[];
+  /** Called when claude transitions between actively streaming output
+   *  (busy, e.g. typing a response / running a tool) and quiet
+   *  (idle, prompt ready). Used by the daemon to tell the inject
+   *  overlay to hide during claude's turn so the view isn't
+   *  constantly flickering as the iframe HMR-reloads from claude's
+   *  edits, and re-show when the turn is done. */
+  onActivityChange?: (isBusy: boolean) => void;
 }
 
 export interface PtyBridgeControl {
@@ -199,6 +206,30 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
   let replayBuffer = '';
   let ptyOutputWired = false;
 
+  // Busy/idle detection: claude is "busy" any time the pty streams
+  // output; after IDLE_DEBOUNCE_MS of silence we call the change
+  // hook with idle=true. Threshold is ~450 ms — long enough to
+  // ignore the small bursts of cursor-repositioning Ink does while
+  // idle (keep-alive paints), short enough that overlays reappear
+  // almost immediately after claude finishes a reply.
+  const IDLE_DEBOUNCE_MS = 450;
+  let isBusy = false;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  function markBusy(): void {
+    if (!isBusy) {
+      isBusy = true;
+      try { opts.onActivityChange?.(true); } catch {}
+    }
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleTimer = null;
+      if (isBusy) {
+        isBusy = false;
+        try { opts.onActivityChange?.(false); } catch {}
+      }
+    }, IDLE_DEBOUNCE_MS);
+  }
+
   function wirePtyOutput(pty: IPty): void {
     if (ptyOutputWired) return;
     ptyOutputWired = true;
@@ -207,6 +238,7 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       if (replayBuffer.length > REPLAY_MAX) {
         replayBuffer = replayBuffer.slice(-REPLAY_MAX);
       }
+      markBusy();
       if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
         currentSocket.send(JSON.stringify({ type: 'data', data }));
       }
