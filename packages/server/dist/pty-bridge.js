@@ -132,7 +132,9 @@ export function registerPtyBridge(app, opts) {
         // we do NOT write to claude's stdin, which would make ANSI sequences
         // get parsed as keystrokes and vanish silently.
         writeToTerminal(text) {
-            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+            const ok = currentSocket && currentSocket.readyState === WebSocket.OPEN;
+            process.stderr.write(`[vc] writeToTerminal: bytes=${text.length} socket=${!!currentSocket} open=${ok}\n`);
+            if (ok) {
                 currentSocket.send(JSON.stringify({ type: 'data', data: text }));
             }
         },

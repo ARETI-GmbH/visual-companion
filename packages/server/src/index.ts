@@ -47,6 +47,11 @@ async function main(): Promise<void> {
   const gateway = registerCompanionWebSocket(app, {
     store,
     onEvent: (ev) => {
+      // Debug line lands in the daemon log so we can diagnose missing
+      // notifications without asking the user to run scripts.
+      process.stderr.write(
+        `[vc] event received: type=${ev.type} ptyRef=${!!ptyRef}\n`,
+      );
       if (!ptyRef || ev.type !== 'pointer') return;
       const p = ev.payload as {
         cssSelector: string;
@@ -60,8 +65,6 @@ async function main(): Promise<void> {
         : '';
       const w = Math.round(p.boundingBox.width);
       const h = Math.round(p.boundingBox.height);
-      // Dim cyan single-line "injection" visible to the user AND to claude,
-      // with an explicit MCP hint so claude knows how to fetch the details.
       ptyRef.writeToTerminal(
         `\r\n\x1b[2;36m[📍 companion] ${p.cssSelector} · ${w}×${h}px · ${pathname}${text}` +
           `\r\n  └─ mcp: get_pointed_element / get_pointed_history\x1b[0m\r\n`,

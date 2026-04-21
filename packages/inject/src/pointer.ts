@@ -13,17 +13,31 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
     if (e.key === 'Alt' && !altDown) {
       altDown = true;
       document.body.style.cursor = 'crosshair';
+      // Block native text-selection while Alt is held so region drags
+      // don't also highlight text on the page.
+      document.body.style.userSelect = 'none';
+      (document.body.style as any).webkitUserSelect = 'none';
+      // Clear any already-selected text from before Alt was pressed.
+      window.getSelection()?.removeAllRanges();
     }
   });
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Alt') {
       altDown = false;
       document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      (document.body.style as any).webkitUserSelect = '';
       overlay.hideHover();
       overlay.hideRegionBox();
       regionStart = null;
     }
   });
+
+  // Belt-and-braces: prevent any selectstart while Alt is held (covers
+  // edge cases where the style reset didn't propagate to the target).
+  document.addEventListener('selectstart', (e) => {
+    if (altDown) e.preventDefault();
+  }, true);
 
   document.addEventListener('mousemove', (e) => {
     if (!altDown) return;
@@ -41,6 +55,9 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   document.addEventListener('mousedown', (e) => {
     if (!altDown || e.button !== 0) return;
     if (e.shiftKey) return;
+    // Swallow the mousedown so the browser doesn't start its own
+    // text-selection drag underneath our region box.
+    e.preventDefault();
     regionStart = { x: e.clientX, y: e.clientY };
   }, true);
 

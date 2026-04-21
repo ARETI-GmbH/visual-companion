@@ -160,8 +160,12 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     // we do NOT write to claude's stdin, which would make ANSI sequences
     // get parsed as keystrokes and vanish silently.
     writeToTerminal(text: string) {
-      if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
-        currentSocket.send(JSON.stringify({ type: 'data', data: text }));
+      const ok = currentSocket && currentSocket.readyState === WebSocket.OPEN;
+      process.stderr.write(
+        `[vc] writeToTerminal: bytes=${text.length} socket=${!!currentSocket} open=${ok}\n`,
+      );
+      if (ok) {
+        currentSocket!.send(JSON.stringify({ type: 'data', data: text }));
       }
     },
     onTerminalInput(handler) {
