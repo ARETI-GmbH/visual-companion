@@ -12,6 +12,12 @@ export interface PtyBridgeControl {
     /** Type `text` into claude's stdin as if the user typed it. Use for
      *  quick-injecting selected-element context into the prompt line. */
     injectInput(text: string): void;
+    /** Queue a context prefix to be silently prepended to the user's next
+     *  prompt. At Enter time the bridge rewrites the line so claude sees
+     *  "prefix + user text" as a single message — without the prefix ever
+     *  appearing in the user's prompt line. Replaces any previous pending
+     *  prefix. */
+    setPendingPrefix(text: string): void;
     onTerminalInput(handler: (data: string) => void): () => void;
 }
 export declare function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions): PtyBridgeControl;

@@ -52,6 +52,65 @@ export function registerPtyBridge(app, opts) {
     let currentPty = null;
     let currentSocket = null;
     const inputListeners = new Set();
+    // --- hidden prefix injection -------------------------------------
+    // Tracks the printable text the user has typed since the last prompt
+    // commit. We track best-effort from input bytes so that at Enter
+    // time we can delete what they typed, retype <pending-prefix +
+    // buffer>, and let claude see the combined text as one message.
+    //
+    // If the user does anything we can't cleanly track (arrow keys,
+    // history recall, tab completion, paste with newlines, …) we set
+    // bufferValid=false and fall back to a plain Enter. Safety over
+    // cleverness.
+    let userBuffer = '';
+    let bufferValid = true;
+    let pendingPrefix = null;
+    function consumeInputChunk(data) {
+        if (data === '\x7f' || data === '\b') {
+            userBuffer = userBuffer.slice(0, -1);
+            return;
+        }
+        if (data === '\x03' || data === '\x15') {
+            // Ctrl+C (abort) or Ctrl+U (clear line) — prompt is being reset.
+            userBuffer = '';
+            pendingPrefix = null;
+            bufferValid = true;
+            return;
+        }
+        if (data.charCodeAt(0) === 0x1b) {
+            // Escape sequence (arrow keys, function keys, mouse reports, …).
+            // Claude's buffer may no longer match ours; bail out of tracking.
+            bufferValid = false;
+            return;
+        }
+        if (data.length === 1 && data >= ' ') {
+            userBuffer += data;
+            return;
+        }
+        if (data.length > 1) {
+            // Multi-byte chunk — paste, UTF-8 sequence, or wrapped typing.
+            // Strip controls and append the rest; still best-effort.
+            const stripped = data.replace(/[\x00-\x1f\x7f]/g, '');
+            if (stripped !== data)
+                bufferValid = false;
+            userBuffer += stripped;
+            return;
+        }
+        // Anything else (unknown single control char) — can't track.
+        bufferValid = false;
+    }
+    function commitWithPrefix(pty) {
+        if (!pendingPrefix || !bufferValid || userBuffer.length === 0)
+            return false;
+        // Backspace over whatever the user typed, then retype prefix+text
+        // and send Enter as a single write so claude sees it as one edit.
+        const deletion = '\x7f'.repeat(userBuffer.length);
+        pty.write(deletion + pendingPrefix + userBuffer + '\r');
+        userBuffer = '';
+        pendingPrefix = null;
+        bufferValid = true;
+        return true;
+    }
     app.get('/_companion/pty', { websocket: true }, (conn) => {
         const socket = conn.socket ?? conn;
         currentSocket = socket;
@@ -103,9 +162,22 @@ export function registerPtyBridge(app, opts) {
             try {
                 const msg = JSON.parse(raw.toString());
                 if (msg.type === 'data') {
-                    pty.write(msg.data);
+                    const data = String(msg.data);
+                    // Enter / Return commits the prompt. If we have a pending
+                    // selection prefix and a trackable buffer, intercept and
+                    // rewrite the line so claude receives "prefix + buffer".
+                    if (data === '\r' || data === '\n' || data === '\r\n') {
+                        if (!commitWithPrefix(pty))
+                            pty.write(data);
+                        userBuffer = '';
+                        bufferValid = true;
+                    }
+                    else {
+                        consumeInputChunk(data);
+                        pty.write(data);
+                    }
                     for (const h of inputListeners)
-                        h(msg.data);
+                        h(data);
                 }
                 if (msg.type === 'resize')
                     pty.resize(msg.cols, msg.rows);
@@ -141,6 +213,9 @@ export function registerPtyBridge(app, opts) {
         injectInput(text) {
             if (currentPty)
                 currentPty.write(text);
+        },
+        setPendingPrefix(text) {
+            pendingPrefix = text;
         },
         onTerminalInput(handler) {
             inputListeners.add(handler);

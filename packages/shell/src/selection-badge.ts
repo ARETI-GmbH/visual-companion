@@ -32,7 +32,7 @@ export function initSelectionBadge(opts: SelectionBadgeOptions): void {
       </div>
       <div class="meta">${u.width}×${u.height}px · ${escape(u.pathname || '/')}</div>
       ${u.text ? `<div class="text">"${escape(u.text)}"</div>` : ''}
-      <div class="hint">→ Kontext ist in Claude's Prompt eingefügt. Tipp einfach deine Frage.</div>
+      <div class="hint">→ Kontext wird automatisch mit deiner nächsten Frage an Claude geschickt.</div>
     `;
     container.style.display = '';
     const closeBtn = container.querySelector('.close') as HTMLButtonElement | null;

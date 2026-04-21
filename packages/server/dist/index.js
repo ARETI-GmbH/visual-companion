@@ -65,16 +65,14 @@ async function main() {
                 height: Math.round(p.boundingBox.height),
                 text: preview,
             });
-            // 2) Auto-inject a short context prefix straight into claude's
-            //    prompt line. Then the user just types their question and hits
-            //    Enter — claude's next turn receives the selection inline as
-            //    part of the user message, so it understands exactly what
-            //    "hier", "das hier", or "dieses Element" refers to, without
-            //    needing the user to phrase the question carefully.
+            // 2) Queue the selection context as a hidden prefix for claude's
+            //    next prompt. The prompt line stays clean for the user — the
+            //    pty bridge rewrites the line at Enter time so claude sees
+            //    "[markiert: …] <user's question>" as a single message.
             const snippet = preview
                 ? `[markiert: ${p.cssSelector} · ${pathname || '/'} · "${preview}"] `
                 : `[markiert: ${p.cssSelector} · ${pathname || '/'}] `;
-            ptyBridgeRef?.injectInput(snippet);
+            ptyBridgeRef?.setPendingPrefix(snippet);
         },
     });
     gatewayRef = gateway;
