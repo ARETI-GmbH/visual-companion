@@ -7,9 +7,10 @@ export interface IframeOptions {
 }
 
 /**
- * Wires the iframe + titlebar controls. The URL bar shows the upstream
- * URL the user actually cares about (e.g. "http://localhost:3000/de"),
- * not the proxy path ("/app/de"). Edits go through the proxy transparently.
+ * Wires the iframe + titlebar controls. The iframe src is the proxy
+ * origin at whatever path the user wants; the URL bar shows the
+ * equivalent upstream URL (e.g. "http://localhost:3000/de") because
+ * that's the URL the user actually debugs against.
  */
 export function initIframe(opts: IframeOptions): void {
   const { iframe, urlInput, reloadBtn, devtoolsBtn, targetUrl } = opts;
@@ -27,12 +28,8 @@ export function initIframe(opts: IframeOptions): void {
       const iframeHref = iframe.contentWindow?.location.href;
       if (!iframeHref) return;
       const frameUrl = new URL(iframeHref);
-      const proxyPrefix = '/app';
-      const pathWithoutPrefix = frameUrl.pathname.startsWith(proxyPrefix)
-        ? frameUrl.pathname.slice(proxyPrefix.length) || '/'
-        : frameUrl.pathname;
       urlInput.value = upstreamOrigin
-        ? upstreamOrigin + pathWithoutPrefix + frameUrl.search + frameUrl.hash
+        ? upstreamOrigin + frameUrl.pathname + frameUrl.search + frameUrl.hash
         : iframeHref;
     } catch {
       // Cross-origin iframe (shouldn't happen through proxy) — leave URL bar alone
@@ -78,26 +75,22 @@ function stripTrailingSlash(s: string): string {
 }
 
 /**
- * Convert whatever the user typed into an iframe src that goes through /app/.
+ * Convert whatever the user typed into an iframe src on the proxy origin.
  *
- *   "http://localhost:3000/foo?x=1"  (matches upstream)  → "/app/foo?x=1"
- *   "/foo"                                                → "/app/foo"
- *   "foo"                                                 → "/app/foo"
- *   "https://other.example/..." (non-upstream)            → "/app/" (fallback; cross-origin)
+ *   "http://localhost:3000/foo?x=1"  (matches upstream)  → "/foo?x=1"
+ *   "/foo"                                                → "/foo"
+ *   "foo"                                                 → "/foo"
+ *   "https://other.example/..." (non-upstream)            → "/" (fallback; cross-origin)
  */
 function resolveToProxyPath(raw: string, upstreamOrigin: string): string {
-  // Absolute URL?
   try {
     const parsed = new URL(raw);
     if (upstreamOrigin && parsed.origin === upstreamOrigin) {
-      return '/app' + parsed.pathname + parsed.search + parsed.hash;
+      return parsed.pathname + parsed.search + parsed.hash;
     }
-    // Cross-origin — just navigate iframe to /app/ root (user can't break out of the proxy)
-    return '/app/';
+    return '/';
   } catch {
-    // Not an absolute URL — treat as path
-    if (raw.startsWith('/app/') || raw === '/app') return raw;
-    if (raw.startsWith('/')) return '/app' + raw;
-    return '/app/' + raw;
+    if (raw.startsWith('/')) return raw;
+    return '/' + raw;
   }
 }

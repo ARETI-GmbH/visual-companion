@@ -185,7 +185,7 @@ const DEV_STDOUT_BUFFER = { text: '' };
 
 function launchChrome(port, serverPid, upstreamUrl) {
   const profileDir = `/tmp/visual-companion-${serverPid}`;
-  const qs = new URLSearchParams({ target: '/app/', upstream: upstreamUrl });
+  const qs = new URLSearchParams({ target: '/', upstream: upstreamUrl });
   const appUrl = `http://localhost:${port}/window/?${qs.toString()}`;
   const chrome = spawn('open', [
     '-na', 'Google Chrome',

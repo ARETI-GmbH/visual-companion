@@ -53,7 +53,9 @@ async function main(): Promise<void> {
   const injectTag = `<script src="/_companion/inject.js" data-companion-port="${cfg.port}"></script>`;
   await registerProxy(app, { targetOrigin: cfg.targetUrl, injectScriptTag: injectTag });
 
-  app.get('/', (_req, reply) => reply.redirect('/window/'));
+  // NB: we used to redirect `/` to `/window/`, but the proxy now owns `/`
+  // (so the upstream homepage renders on the proxy origin). The companion
+  // shell is addressed explicitly via /window/.
   app.get('/_companion/health', async () => ({ ok: true, events: store.size() }));
 
   // Register PTY bridge route before listen (Fastify v4 forbids adding

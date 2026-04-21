@@ -10,7 +10,7 @@ const main = document.querySelector('.main') as HTMLElement;
 const leftPane = document.querySelector('.pane-left') as HTMLElement;
 
 const config = new URLSearchParams(window.location.search);
-const targetUrl = config.get('target') ?? '/app/';
+const targetUrl = config.get('target') ?? '/';
 
 initIframe({ iframe, urlInput, reloadBtn, devtoolsBtn, targetUrl });
 initTerminal({ container: document.getElementById('terminal')! });

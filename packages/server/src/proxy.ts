@@ -18,11 +18,22 @@ const STRIPPED_RESPONSE_HEADERS = new Set([
 export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): Promise<void> {
   const { targetOrigin } = opts;
 
-  app.all('/app/*', async (req: FastifyRequest, reply: FastifyReply) => {
-    const upstreamUrl = new URL(
-      (req.params as { '*': string })['*'] || '',
-      targetOrigin + '/',
-    );
+  // Transparent catch-all proxy. Every request that isn't a companion-
+  // specific route (/window/*, /_companion/*) is forwarded verbatim to
+  // upstream. The browser sees the proxy origin as if it WERE upstream:
+  // absolute asset paths like /_next/static/... resolve on the proxy
+  // port and get forwarded through. No path rewriting, no /app/ prefix,
+  // no surprises — that's what "debuggable like the real thing" means.
+  app.all('/*', async (req: FastifyRequest, reply: FastifyReply) => {
+    const rawPath = (req.params as { '*': string })['*'] || '';
+    // Hands off our own routes — specific route handlers get Fastify
+    // priority, but the catch-all still sees these if they fall through.
+    if (rawPath.startsWith('window/') || rawPath === 'window' ||
+        rawPath.startsWith('_companion/') || rawPath === '_companion') {
+      reply.callNotFound();
+      return;
+    }
+    const upstreamUrl = new URL(rawPath, targetOrigin + '/');
     for (const [k, v] of Object.entries(req.query as Record<string, string>)) {
       upstreamUrl.searchParams.set(k, v);
     }
@@ -68,16 +79,14 @@ export async function registerProxy(app: FastifyInstance, opts: ProxyOptions): P
         continue;
       }
       if (lower === 'location') {
+        // Strip the upstream origin so redirects stay on the proxy host;
+        // otherwise a 302 would bounce the user to real :3000 and break
+        // the iframe sandbox. Relative Location values pass through.
         const rewritten = rewriteLocation(
           Array.isArray(value) ? value.join(', ') : String(value),
           targetOrigin,
         );
         reply.header('location', rewritten);
-        continue;
-      }
-      if (lower === 'set-cookie') {
-        const cookies = Array.isArray(value) ? value : [String(value)];
-        reply.header('set-cookie', cookies.map(rewriteCookiePath));
         continue;
       }
       reply.header(key, value as string);
@@ -108,8 +117,11 @@ export function attachWebSocketProxy(
   const upstreamPort = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    if (!req.url?.startsWith('/app/')) return;
-    const upstreamPath = req.url.slice('/app'.length) || '/';
+    // Pass everything except companion-specific WS endpoints upstream.
+    // The PTY bridge registers /_companion/pty and owns that upgrade.
+    if (!req.url) return;
+    if (req.url.startsWith('/_companion/') || req.url.startsWith('/window/')) return;
+    const upstreamPath = req.url;
 
     const upstreamSocket = net.connect(upstreamPort, upstreamHost, () => {
       const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
@@ -149,12 +161,13 @@ export function stripFrameAncestors(cspValue: string): string {
 }
 
 /**
- * Rewrite a Location header so that same-origin redirects stay inside
- * the /app proxy. External redirects are passed through unchanged.
+ * Rewrite a Location header so absolute upstream URLs are replaced with
+ * a same-origin path (strips the upstream origin). Keeps the browser
+ * inside the proxy when the upstream responds with a 3xx.
  *
- *   "/de"                          → "/app/de"
- *   "http://localhost:3000/de"     → "/app/de"   (if targetOrigin matches)
- *   "https://auth.example.com/..." → unchanged   (external)
+ *   "/de"                          → "/de"            (pass through)
+ *   "http://localhost:3000/de"     → "/de"            (strip origin)
+ *   "https://auth.example.com/..." → unchanged        (external)
  */
 export function rewriteLocation(loc: string, targetOrigin: string): string {
   if (!loc) return loc;
@@ -162,29 +175,12 @@ export function rewriteLocation(loc: string, targetOrigin: string): string {
     const target = new URL(targetOrigin);
     const resolved = new URL(loc, target);
     if (resolved.origin === target.origin) {
-      return '/app' + resolved.pathname + resolved.search + resolved.hash;
+      return resolved.pathname + resolved.search + resolved.hash;
     }
     return loc;
   } catch {
     return loc;
   }
-}
-
-/**
- * Rewrite a Set-Cookie's Path attribute so cookies scoped to upstream paths
- * are sent back for the matching /app-prefixed paths the iframe uses.
- *
- *   "sid=x; Path=/api; HttpOnly" → "sid=x; Path=/app/api; HttpOnly"
- *   "sid=x; Path=/"              → "sid=x; Path=/app/"
- *   "sid=x" (no Path)            → unchanged
- */
-export function rewriteCookiePath(cookie: string): string {
-  return cookie.replace(/;\s*Path=([^;]*)/i, (_m, rawPath: string) => {
-    const path = rawPath.trim();
-    if (path === '' || path === '/') return '; Path=/app/';
-    if (path.startsWith('/')) return '; Path=/app' + path;
-    return '; Path=' + path;
-  });
 }
 
 function upstreamErrorHtml(err: unknown, targetOrigin: string): string {
