@@ -15,6 +15,11 @@ export async function registerProxy(app, opts) {
         const forwardHeaders = { ...req.headers };
         delete forwardHeaders.host;
         delete forwardHeaders['content-length'];
+        // Tell upstream to keep the body uncompressed. undici.request does not
+        // auto-decompress, so if we forward Accept-Encoding: gzip we'd read
+        // gzip bytes as UTF-8 on the HTML-injection path and serve garbled
+        // mojibake. The proxy is loopback — compression is pure overhead.
+        delete forwardHeaders['accept-encoding'];
         let upstreamResp;
         try {
             upstreamResp = await undiciRequest(upstreamUrl.toString(), {
