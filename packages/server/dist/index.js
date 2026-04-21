@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
-import { readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, rmSync, watch as fsWatch } from 'node:fs';
 import { getConfigFromEnv } from './config.js';
 import { registerProxy } from './proxy.js';
 import { registerCompanionWebSocket } from './websocket.js';
@@ -130,6 +130,14 @@ async function main() {
         mkdirSync(profileDir, { recursive: true });
     }
     catch { }
+    // Auto-reload: watch the project directory and hard-refresh the
+    // iframe when the user (or claude) edits source files. Debounced so
+    // a burst of saves produces exactly one reload after things quiet
+    // down. inject.js already handles { type: 'reload' } by calling
+    // window.location.reload() on the iframe's own origin.
+    const stopFileWatcher = startFileWatcher(cfg.cwd, () => {
+        gateway.broadcast({ type: 'reload' });
+    });
     // Shutdown watchdog: exit when client count stayed at 0 for 60s after initial connect
     let hadConnectionOnce = false;
     let gapStartMs = null;
@@ -158,6 +166,10 @@ async function main() {
     }, 5000);
     async function shutdown() {
         clearInterval(watchdog);
+        try {
+            stopFileWatcher();
+        }
+        catch { }
         try {
             await app.close();
         }
@@ -192,4 +204,53 @@ main().catch((err) => {
     console.error('fatal:', err);
     process.exit(1);
 });
+/**
+ * Watch the project directory for file changes and fire `onQuiet` after
+ * a 1500 ms debounce — one reload per burst of saves, not one per keystroke.
+ * Returns a disposer that closes the underlying fs.watch handle.
+ *
+ * fs.watch(recursive) is supported on macOS + Windows; on Linux kernel
+ * 4.9+ since Node 20 (our engines field pins >=20). Directories we never
+ * want to reload on (node_modules, build output, version control) are
+ * filtered by filename regex — cheaper and enough for our use.
+ */
+const IGNORE = /(^|[\/\\])(node_modules|\.git|\.next|\.turbo|\.cache|\.svelte-kit|dist|build|out|coverage|\.DS_Store)([\/\\]|$)/;
+const IGNORE_TAIL = /(\.swp|\.swx|~|\.tmp)$/;
+function startFileWatcher(cwd, onQuiet) {
+    let timer = null;
+    let watcher = null;
+    try {
+        watcher = fsWatch(cwd, { recursive: true }, (_event, filename) => {
+            if (!filename)
+                return;
+            const name = String(filename);
+            if (IGNORE.test(name) || IGNORE_TAIL.test(name))
+                return;
+            if (timer)
+                clearTimeout(timer);
+            timer = setTimeout(() => {
+                timer = null;
+                process.stderr.write(`[vc] auto-reload: file change (${name}) — broadcasting reload\n`);
+                try {
+                    onQuiet();
+                }
+                catch { }
+            }, 1500);
+        });
+        watcher.on('error', (err) => {
+            process.stderr.write(`[vc] file watcher error: ${err.message}\n`);
+        });
+    }
+    catch (err) {
+        process.stderr.write(`[vc] could not watch ${cwd}: ${err.message}\n`);
+    }
+    return () => {
+        if (timer)
+            clearTimeout(timer);
+        try {
+            watcher?.close();
+        }
+        catch { }
+    };
+}
 //# sourceMappingURL=index.js.map
