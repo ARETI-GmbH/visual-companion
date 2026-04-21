@@ -72,9 +72,17 @@ async function main(): Promise<void> {
       //    next prompt. The prompt line stays clean for the user — the
       //    pty bridge rewrites the line at Enter time so claude sees
       //    "[markiert: …] <user's question>" as a single message.
+      //
+      //    We include an inline MCP hint. Server-level instructions
+      //    already tell claude to call get_pointed_element on
+      //    [markiert], but some sessions don't pick those up on the
+      //    first initialize — the inline nudge is a defensive
+      //    second layer so the flow works regardless.
+      const selector = p.cssSelector;
+      const path = pathname || '/';
       const snippet = preview
-        ? `[markiert: ${p.cssSelector} · ${pathname || '/'} · "${preview}"] `
-        : `[markiert: ${p.cssSelector} · ${pathname || '/'}] `;
+        ? `[markiert: ${selector} · ${path} · "${preview}" — bitte zuerst MCP get_pointed_element aufrufen] `
+        : `[markiert: ${selector} · ${path} — bitte zuerst MCP get_pointed_element aufrufen] `;
       ptyBridgeRef?.setPendingPrefix(snippet);
     },
   });

@@ -112,28 +112,59 @@ export function registerPtyBridge(app, opts) {
         userBuffer += printable;
     }
     function commitWithPrefix(pty) {
-        if (!pendingPrefix) {
-            process.stderr.write('[vc] commit skipped: no pending prefix\n');
+        if (!pendingPrefix)
+            return false;
+        if (!bufferValid || userBuffer.length === 0) {
+            // Can't safely splice — the Ctrl+A/E fallback caused a double-Enter
+            // in Claude Code's Ink-based TUI (which doesn't treat them as line
+            // navigation), so we now drop the prefix and send a plain Enter.
+            // Loses the context for that one turn, but Enter works cleanly.
+            process.stderr.write(`[vc] commit DROP: valid=${bufferValid} buf=${userBuffer.length}\n`);
+            pendingPrefix = null;
             return false;
         }
-        if (bufferValid && userBuffer.length > 0) {
-            // Clean path: delete what the user typed, retype prefix+buffer.
-            process.stderr.write(`[vc] commit PRIMARY: buf=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`);
-            const deletion = '\x7f'.repeat(userBuffer.length);
-            pty.write(deletion + pendingPrefix + userBuffer + '\r');
-        }
-        else {
-            // Fallback: we don't know buffer state (arrow keys, empty, …).
-            // Use Ctrl+A (home) + prefix + Ctrl+E (end) + Enter — lands the
-            // prefix at the start of whatever claude's line contains right
-            // now. Works even if our tracking drifted.
-            process.stderr.write(`[vc] commit FALLBACK (ctrl-a/e): bufValid=${bufferValid} bufLen=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`);
-            pty.write('\x01' + pendingPrefix + '\x05\r');
-        }
+        process.stderr.write(`[vc] commit OK: buf=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`);
+        const deletion = '\x7f'.repeat(userBuffer.length);
+        pty.write(deletion + pendingPrefix + userBuffer + '\r');
         userBuffer = '';
         pendingPrefix = null;
         bufferValid = true;
         return true;
+    }
+    // Ring-buffer of recent pty output. If the shell reloads (plugin
+    // update, Cmd+R, etc.) the fresh xterm would otherwise start blank
+    // and the user would lose their conversation view. With claude's
+    // Ink/React TUI we force a SIGWINCH redraw right after reconnect —
+    // Ink re-renders the whole message list. We also replay the last
+    // chunk of output, so even if the redraw is slow the view isn't
+    // empty for long.
+    const REPLAY_MAX = 64 * 1024;
+    let replayBuffer = '';
+    let ptyOutputWired = false;
+    function wirePtyOutput(pty) {
+        if (ptyOutputWired)
+            return;
+        ptyOutputWired = true;
+        pty.onData((data) => {
+            replayBuffer += data;
+            if (replayBuffer.length > REPLAY_MAX) {
+                replayBuffer = replayBuffer.slice(-REPLAY_MAX);
+            }
+            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+                currentSocket.send(JSON.stringify({ type: 'data', data }));
+            }
+        });
+        pty.onExit(({ exitCode, signal }) => {
+            const msg = `\r\n\x1b[90m[visual-companion] claude exited (code ${exitCode}${signal ? `, signal ${signal}` : ''})\x1b[0m\r\n`;
+            replayBuffer += msg;
+            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+                currentSocket.send(JSON.stringify({ type: 'data', data: msg }));
+                currentSocket.send(JSON.stringify({ type: 'exit', exitCode }));
+            }
+            currentPty = null;
+            ptyOutputWired = false;
+            replayBuffer = '';
+        });
     }
     app.get('/_companion/pty', { websocket: true }, (conn) => {
         const socket = conn.socket ?? conn;
@@ -150,12 +181,36 @@ export function registerPtyBridge(app, opts) {
             return;
         }
         const companionPort = typeof opts.companionPort === 'function' ? opts.companionPort() : opts.companionPort;
+        // --- reconnect path: pty already alive (shell was reloaded) ----
+        if (currentPty) {
+            process.stderr.write('[vc] pty reconnect — replaying buffer + forcing redraw\n');
+            // Clear the new xterm, replay the tail of what we've seen so
+            // the user's view isn't blank, then SIGWINCH (via a resize
+            // roundtrip) to make claude's Ink TUI redraw its full state.
+            sendData(socket, '\x1b[2J\x1b[H\x1b[3J');
+            if (replayBuffer.length > 0)
+                sendData(socket, replayBuffer);
+            setTimeout(() => {
+                try {
+                    currentPty?.resize(121, 30);
+                    setTimeout(() => {
+                        try {
+                            currentPty?.resize(120, 30);
+                        }
+                        catch { }
+                    }, 40);
+                }
+                catch { }
+            }, 120);
+            wireInputFromSocket(socket);
+            return;
+        }
+        // --- first connect: actually spawn claude -----------------------
         const childEnv = {
             ...process.env,
             VISUAL_COMPANION_PORT: String(companionPort),
             TERM: 'xterm-256color',
         };
-        // Diagnostic header so the user can see exactly what was spawned.
         sendData(socket, `\x1b[90m[visual-companion] spawning: ${CLAUDE_BIN}${(opts.claudeArgs ?? []).length ? ' ' + (opts.claudeArgs ?? []).join(' ') : ''}\x1b[0m\r\n` +
             `\x1b[90m[visual-companion] cwd: ${opts.cwd}\x1b[0m\r\n` +
             `\x1b[90m[visual-companion] VISUAL_COMPANION_PORT=${companionPort}\x1b[0m\r\n\r\n`);
@@ -175,53 +230,47 @@ export function registerPtyBridge(app, opts) {
             return;
         }
         currentPty = pty;
-        pty.onData((data) => sendData(socket, data));
-        pty.onExit(({ exitCode, signal }) => {
-            sendData(socket, `\r\n\x1b[90m[visual-companion] claude exited (code ${exitCode}${signal ? `, signal ${signal}` : ''})\x1b[0m\r\n`);
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'exit', exitCode }));
-            }
-        });
+        wirePtyOutput(pty);
+        wireInputFromSocket(socket);
+    });
+    function wireInputFromSocket(socket) {
         socket.on('message', (raw) => {
             try {
                 const msg = JSON.parse(raw.toString());
-                if (msg.type === 'data') {
+                if (msg.type === 'data' && currentPty) {
                     const data = String(msg.data);
-                    // Enter / Return commits the prompt. If we have a pending
-                    // selection prefix and a trackable buffer, intercept and
-                    // rewrite the line so claude receives "prefix + buffer".
                     if (data === '\r' || data === '\n' || data === '\r\n') {
                         process.stderr.write(`[vc] ENTER  valid=${bufferValid} buf=${userBuffer.length} prefix=${!!pendingPrefix}\n`);
-                        if (!commitWithPrefix(pty))
-                            pty.write(data);
+                        if (!commitWithPrefix(currentPty))
+                            currentPty.write(data);
                         userBuffer = '';
                         bufferValid = true;
                     }
                     else {
                         consumeInputChunk(data);
-                        pty.write(data);
+                        currentPty.write(data);
                     }
                     for (const h of inputListeners)
                         h(data);
                 }
-                if (msg.type === 'resize')
-                    pty.resize(msg.cols, msg.rows);
+                if (msg.type === 'resize' && currentPty) {
+                    currentPty.resize(msg.cols, msg.rows);
+                }
             }
             catch {
                 // ignore malformed
             }
         });
         socket.on('close', () => {
-            try {
-                pty.kill();
-            }
-            catch { }
+            // Do NOT kill the pty. Shell reloads (plugin update, Cmd+R)
+            // tear the socket down but the user expects to come back to
+            // the same claude session. The idle watchdog in index.ts
+            // handles eventual cleanup if no client reconnects within 60s.
             if (currentSocket === socket)
                 currentSocket = null;
-            if (currentPty === pty)
-                currentPty = null;
+            process.stderr.write('[vc] pty socket closed — pty kept alive\n');
         });
-    });
+    }
     return {
         // Render text in the xterm display on the right pane. Goes via the
         // WebSocket that streams claude's stdout — we do NOT write to
