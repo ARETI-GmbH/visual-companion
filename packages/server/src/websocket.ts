@@ -7,6 +7,7 @@ import type { CompanionEvent } from './types';
 
 export interface WebSocketOptions {
   store: EventStore;
+  onEvent?: (event: CompanionEvent) => void;
 }
 
 export interface ServerMessage {
@@ -46,6 +47,7 @@ export function registerCompanionWebSocket(
           payload: incoming.payload,
         };
         opts.store.append(event);
+        try { opts.onEvent?.(event); } catch { /* ignore notifier errors */ }
       } catch {
         // ignore malformed
       }

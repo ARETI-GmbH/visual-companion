@@ -22,6 +22,10 @@ export function registerCompanionWebSocket(app, opts) {
                     payload: incoming.payload,
                 };
                 opts.store.append(event);
+                try {
+                    opts.onEvent?.(event);
+                }
+                catch { /* ignore notifier errors */ }
             }
             catch {
                 // ignore malformed

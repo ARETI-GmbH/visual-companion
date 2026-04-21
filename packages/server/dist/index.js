@@ -39,7 +39,31 @@ async function main() {
     }
     const store = new EventStore({ maxEvents: 5000, maxAgeMs: 5 * 60 * 1000 });
     const screenshots = new ScreenshotCache(100);
-    const gateway = registerCompanionWebSocket(app, { store });
+    // Forward-declared: pty is created below, but the gateway needs to know
+    // about it so Alt+Click can surface as a visible line in the claude pane.
+    let ptyRef = null;
+    const gateway = registerCompanionWebSocket(app, {
+        store,
+        onEvent: (ev) => {
+            if (!ptyRef || ev.type !== 'pointer')
+                return;
+            const p = ev.payload;
+            let pathname = '';
+            try {
+                pathname = new URL(ev.url).pathname;
+            }
+            catch { }
+            const text = p.textContent
+                ? ' · "' + p.textContent.replace(/\s+/g, ' ').slice(0, 60).trim() + '"'
+                : '';
+            const w = Math.round(p.boundingBox.width);
+            const h = Math.round(p.boundingBox.height);
+            // Dim cyan single-line "injection" visible to the user AND to claude,
+            // with an explicit MCP hint so claude knows how to fetch the details.
+            ptyRef.writeToTerminal(`\r\n\x1b[2;36m[📍 companion] ${p.cssSelector} · ${w}×${h}px · ${pathname}${text}` +
+                `\r\n  └─ mcp: get_pointed_element / get_pointed_history\x1b[0m\r\n`);
+        },
+    });
     if (cfg.injectFile) {
         app.get('/_companion/inject.js', async (_req, reply) => {
             reply.type('application/javascript');
@@ -61,6 +85,7 @@ async function main() {
         companionPort: () => resolvedPort,
         claudeArgs: cfg.claudeArgs,
     });
+    ptyRef = pty; // wire lazy ref so pointer events can surface in the pane
     registerMcpHandlers(app, { store, gateway, pty });
     // Profile dir for potential cleanup later
     const profileDir = `/tmp/visual-companion-${process.pid}`;

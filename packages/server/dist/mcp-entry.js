@@ -6,8 +6,8 @@ import { DaemonClient } from './mcp-tools.js';
 const port = parseInt(process.env.VISUAL_COMPANION_PORT ?? '0', 10);
 const client = port > 0 ? new DaemonClient(port) : null;
 const TOOLS = [
-    { name: 'get_pointed_element', description: 'Get the most recently pointed element + full context', inputSchema: { type: 'object', properties: {} } },
-    { name: 'get_pointed_history', description: 'Get last N pointer events', inputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] } },
+    { name: 'get_pointed_element', description: 'Get the element the user just Alt+clicked or region-selected in the companion pane, with full context (DOM, computed styles, screenshot, source-map, ancestors). Call this whenever the user refers to "this element", "das hier", "the thing I selected", or whenever you see a [📍 companion] notification line in the terminal whose details you have not loaded yet.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'get_pointed_history', description: 'Get the last N elements the user pointed at (same payload as get_pointed_element). Useful when the user says "the one before that", compares two selections, or refers to an earlier selection.', inputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] } },
     { name: 'get_console_logs', description: 'Get console logs', inputSchema: { type: 'object', properties: { since_ms: { type: 'number' }, level: { type: 'string' } } } },
     { name: 'get_network_requests', description: 'Get network requests', inputSchema: { type: 'object', properties: { since_ms: { type: 'number' }, filter: { type: 'object' } } } },
     { name: 'get_dom_snapshot', description: 'Get DOM snapshot', inputSchema: { type: 'object', properties: { selector: { type: 'string' } } } },
