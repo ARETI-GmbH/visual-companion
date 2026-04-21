@@ -30,6 +30,11 @@ const shellDir = path.join(pluginRoot, 'packages/shell/dist');
 const injectFile = path.join(pluginRoot, 'packages/inject/dist/inject.js');
 const nodeModulesDir = path.join(pluginRoot, 'node_modules');
 
+/** Shared buffer for dev-server stdout/stderr text, scanned for URLs.
+ *  Declared at module scope BEFORE the main IIFE so the async body can
+ *  safely reference it without hitting TDZ. */
+const DEV_STDOUT_BUFFER = { text: '' };
+
 (async function main() {
   const cwd = process.cwd();
 
@@ -177,9 +182,6 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
 });
 
 // --- helpers -------------------------------------------------------------
-
-/** Shared buffer for dev-server stdout/stderr text, scanned for URLs. */
-const DEV_STDOUT_BUFFER = { text: '' };
 
 function launchChrome(port, serverPid, upstreamUrl) {
   const profileDir = `/tmp/visual-companion-${serverPid}`;
