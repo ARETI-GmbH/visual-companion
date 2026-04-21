@@ -1,0 +1,23 @@
+{
+  "name": "@areti-gmbh/visual-companion",
+  "version": "0.1.0",
+  "description": "Unified Chrome-App Window mit Live-Pointer für Web-App-Entwicklung",
+  "author": "ARETI GmbH",
+  "license": "UNLICENSED",
+  "commands": [
+    {
+      "name": "visual-companion",
+      "aliases": ["vc"],
+      "description": "Öffnet unified window mit Browser + Claude für eine URL",
+      "usage": "/visual-companion [url]",
+      "handler": "bin/launch.js"
+    }
+  ],
+  "mcpServers": {
+    "visual-companion-mcp": {
+      "command": "node",
+      "args": ["packages/server/dist/mcp-entry.js"],
+      "transport": "stdio"
+    }
+  }
+}
