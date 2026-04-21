@@ -1,10 +1,15 @@
 # Visual Companion
 
-**Unified Chrome-App-Window für Claude-Code-Entwicklung.** Deine Web-App läuft links durch einen transparenten Reverse-Proxy, eine Claude-Code-Session rechts. Alt+Click auf beliebige UI-Elemente → Claude bekommt sofort vollen DOM-Kontext, Computed Styles, Screenshot, Source-Map und Ancestor-Chain. Console-Logs, Network-Requests und Errors streamen live in einen 5-Minuten-Ring-Buffer den Claude on-demand abfragt.
+**Split-Pane-Fenster für Claude-Code-Entwicklung:** deine Web-App läuft links
+durch einen transparenten Reverse-Proxy, eine Claude-Code-Session rechts.
+`Alt+Shift+Click` auf ein UI-Element (oder Drag für eine Region) legt es in
+einen Multi-Select-Buffer — Claude bekommt DOM, Computed Styles, Screenshot,
+Source-Map und Ancestors per MCP, während Console-Logs, Network-Requests und
+Errors live in einen Ring-Buffer streamen, den Claude on-demand abfragt.
 
-## Install (via Claude Code)
+## Install
 
-In irgendeiner Claude-Code-Session:
+In einer beliebigen Claude-Code-Session:
 
 ```
 /plugin marketplace add ARETI-GmbH/visual-companion
@@ -12,27 +17,31 @@ In irgendeiner Claude-Code-Session:
 /reload-plugins
 ```
 
-Beim ersten Aufruf von `/visual-companion` installiert das Plugin automatisch seine Node-Dependencies (~1 Min einmalig).
+Beim ersten Aufruf von `/visual-companion` installiert das Plugin automatisch
+seine Node-Dependencies (~1 Min einmalig).
 
 ## Usage
 
 ```
-/visual-companion                            # Standard: aktuelle Konversation übernehmen, alte Terminal-Session wird geschlossen
-/visual-companion http://localhost:3000      # Explizite URL
-/visual-companion --new                      # Frische Claude-Session, alte Terminal-Session bleibt offen
-/visual-companion --resume <session-id>      # Spezifische Session
-/visual-companion --dsp                      # Claude im Chrome-Fenster mit --dangerously-skip-permissions
-/visual-companion-stop                       # Beendet alle Daemons + Chrome-Windows (z.B. nach Plugin-Update)
+/visual-companion                            # aktuelle Claude-Session übernehmen
+/visual-companion http://localhost:3000      # explizite URL
+/visual-companion --new                      # frische Session, altes Terminal bleibt
+/visual-companion --resume <session-id>      # spezifische Session
+/visual-companion --dsp                      # mit --dangerously-skip-permissions
+/visual-companion-stop                       # alle Daemons + Chrome-Windows beenden
 ```
 
-Oder `/vc` als Alias. Das Plugin:
+Alias: `/vc`. Ablauf:
 
-1. **Detectet die Ziel-URL** (CLI-Arg → `.visual-companion.json` → `package.json` scripts.dev)
-2. **Startet deinen Dev-Server automatisch**, falls die URL noch nicht erreichbar ist (`pnpm dev` / `npm run dev` / `yarn dev` / `bun run dev` — Package-Manager wird auto-erkannt)
-3. **Öffnet Chrome im App-Mode** mit isoliertem Profil und split-view: Web-App links, Claude-Session rechts
+1. **URL detecten** (CLI-Arg → `.visual-companion.json` → `package.json` scripts.dev)
+2. **Dev-Server autostarten**, falls Port noch nicht lauscht
+   (`pnpm dev` / `npm run dev` / `yarn dev` / `bun run dev` — Paket-Manager
+   wird auto-erkannt)
+3. **Chrome im App-Mode** öffnen mit isoliertem Profil, split-view:
+   Web-App links, Claude-Session rechts
 4. **Self-shutdown nach 60s Idle** — keine Dangling-Prozesse
 
-### Pro Projekt konfigurierbar via `.visual-companion.json`
+### Pro-Projekt-Config `.visual-companion.json`
 
 ```json
 {
@@ -41,55 +50,115 @@ Oder `/vc` als Alias. Das Plugin:
 }
 ```
 
-## Features
+## Elemente markieren
 
-**Point-and-tell:**
-- `Alt + Hover` — Element-Highlight mit CSS-Selector-Label
-- `Alt + Click` — Element an Claude senden (DOM, Styles, Screenshot, Source-Map, Ancestors)
-- `Alt + Shift + Click` — Multi-Select
-- `Alt + Drag` — Region auswählen
+**Hotkey `Alt+Shift`** (nicht nur `Alt` — Mac-Alt braucht man für
+Sonderzeichen wie `@` auf deutscher Tastatur).
 
-**Live observability:**
-- Console-Logs (alle Levels)
-- Network-Requests (fetch + XHR)
-- DOM-Mutations (batched)
-- Navigation-Events (pushState/popstate)
-- Uncaught errors + unhandled rejections
+- `Alt+Shift + Hover` — Live-Highlight mit CSS-Selektor-Label
+- `Alt+Shift + Click` — Element in den Buffer legen (orange)
+- `Alt+Shift + Drag` — Region auswählen (blau, bleibt genau beim gezogenen
+  Rechteck; Claude bekommt zusätzlich den kleinsten umschließenden DOM-Knoten
+  als Kontext)
+- `Esc` — ganzen Buffer leeren
 
-**MCP-Tools für Claude** (15 insgesamt):
-- Query: `get_pointed_element`, `get_console_logs`, `get_network_requests`, `get_dom_snapshot`, `get_computed_styles`, `take_screenshot`, `get_source_location`, `get_recent_events`, `get_page_info`, `get_pointed_history`
-- Action: `highlight_element`, `scroll_to`, `navigate_to`, `reload`, `evaluate_in_page` (mit Terminal-Confirmation)
+Picks akkumulieren — alles, was du Alt+Shift-selektierst, stapelt sich als
+**Chip-Liste** oben im rechten Pane (über dem Claude-Terminal):
 
-**Technische Highlights:**
-- Reverse Proxy strippt X-Frame-Options und CSP `frame-ancestors`, injiziert Companion-Script transparent
-- WebSocket-Tunneling erhält HMR (Vite / Next.js / Webpack Dev-Server funktionieren normal)
-- Isoliertes Chrome-Profil pro Fenster (kein Cookie-Leak aus dem Haupt-Browser)
-- xterm.js + node-pty für vollwertiges Terminal im rechten Pane
-- Chrome-App-Mode via `open --app=` — keine Electron-Distribution nötig
+- Farbpunkt zeigt Typ (orange=Element, blau=Region)
+- Auto-Labels `#1`, `#2`, `#3` … — **Doppelklick** aufs Label zum Umbenennen
+  (z.B. `TopBar`, `CTA`, `Sidebar`). Der neue Name geht sofort in den
+  Prompt-Prefix, den Claude sieht — du kannst also "schau dir TopBar und
+  CTA an" schreiben, Claude mappt auf die Snapshots zurück
+- Einfach-Klick auf Chip → Element pulst kurz in der App
+- `×` entfernt einen einzelnen Chip
+
+Jeder Pick hängt an seiner URL. **Navigation innerhalb der App versteckt
+die Rahmen, kommst du zurück, tauchen sie wieder auf.** Der Kontext für
+Claude bleibt über Navigation und über Folge-Nachrichten hinweg erhalten,
+bis du explizit Esc drückst oder neue Picks machst.
+
+**Während Claude gerade arbeitet** verschwinden die Rahmen automatisch
+(sonst würden sie während HMR-Reloads flackern). Sobald Claudes Output
+stillsteht, kommen sie mit neu aufgelösten Selektoren zurück — passt also
+auch auf Code-Änderungen, die Claude gerade committet hat.
+
+## Was Claude mitkriegt
+
+Jede Markierung fügt still einen Prefix in deine nächste Prompt-Zeile ein:
+
+```
+[markiert: TopBar=.header·/leads · "LEADS 11" ; #2=#ctaBtn·/leads — bitte zuerst MCP get_pointed_elements aufrufen]
+```
+
+Du tippst ganz normal weiter — der Prefix ist nur für Claude sichtbar. Wenn
+du Enter drückst, committet er mit deiner Frage als eine einzige Nachricht.
+
+Claude sieht den Hinweis in seinen MCP-Instructions (per Plugin fest hinterlegt)
+und zieht dann automatisch die vollen Daten:
+
+**Query-Tools:**
+- `get_pointed_element` — letzter Pick, volle Payload
+- `get_pointed_elements` — komplette Buffer-Liste mit Labels (für Mehrfach-Picks)
+- `get_pointed_history` — frühere Picks (auch nach Esc noch abrufbar)
+- `get_console_logs` — Console-Stream (level-Filter optional)
+- `get_network_requests` — Fetch + XHR-Log
+- `get_dom_snapshot`, `get_computed_styles`, `get_source_location`,
+  `take_screenshot`, `get_page_info`, `get_recent_events`
+
+**Action-Tools:**
+- `highlight_element`, `scroll_to`, `navigate_to`, `reload`,
+  `evaluate_in_page`
+
+Claude wird zusätzlich proaktiv angewiesen, bei "schau in die Konsole /
+there's an error / das klappt nicht" automatisch `get_console_logs` zu
+rufen — statt dich nach Copy-Paste zu fragen.
+
+## Technische Highlights
+
+- **Transparenter Reverse Proxy**: alle Pfade (`/_next/static/...`,
+  `/@vite/client`, etc.) gehen direkt durch, X-Frame-Options und CSP
+  `frame-ancestors` werden gestrippt, Companion-Script wird vor `</head>`
+  injected
+- **HMR funktioniert**: WebSocket-Upgrades werden sauber an Upstream
+  getunnelt (fastify-websocket und Proxy teilen sich den `upgrade`-Event
+  ohne Race) — Vite, Next.js, Webpack Dev-Server, Svelte-Kit laufen alle
+  wie direkt
+- **Dual-Stack-Connect** (RFC 8305 Happy Eyeballs): Dev-Server auf
+  `127.0.0.1`, `::1` oder beiden — egal, der erste der antwortet gewinnt
+- **Isoliertes Chrome-Profil** pro Fenster — keine Cookies/Logins aus
+  deinem Haupt-Browser
+- **xterm.js + node-pty** für vollwertiges Terminal im rechten Pane
+- **Chrome-App-Mode** via `open --app=` — keine Electron-Distribution nötig
+- **PTY-Persistenz**: Session überlebt Iframe-Reload, Plugin-Update und
+  Cmd+R — Claude läuft weiter, die xterm-Ansicht wird aus dem Replay-Buffer
+  wiederhergestellt
 
 ## Develop
-
-Lokal am Plugin selbst entwickeln:
 
 ```bash
 git clone https://github.com/ARETI-GmbH/visual-companion.git
 cd visual-companion
 npm install
 npm run build
-npm test        # 20 unit tests
-npm run e2e     # 2 Playwright E2E
+npm test        # Vitest unit tests
+npm run e2e     # Playwright E2E
 ```
+
+Nach Code-Änderungen am Plugin selbst: `/visual-companion-stop`,
+dann `/visual-companion` um den neuen Daemon zu laden.
 
 ## Plattform
 
-macOS only (Chrome App-Mode + AppleScript-Hooks). Linux/Windows-Support siehe `docs/DEFERRED-FIXES.md`.
+macOS only (Chrome App-Mode + AppleScript-Hooks für Terminal-Close).
+Linux/Windows-Support siehe `docs/DEFERRED-FIXES.md`.
 
 ## Dokumentation
 
 - **Design-Spec:** `docs/superpowers/specs/2026-04-21-visual-companion-design.md`
 - **Implementation-Plan:** `docs/superpowers/plans/2026-04-21-visual-companion.md`
 - **Manual-Acceptance-Checklist:** `docs/MANUAL-ACCEPTANCE.md`
-- **Deferred Fixes:** `docs/DEFERRED-FIXES.md` (bekannte Follow-ups vor Produktionseinsatz)
+- **Deferred Fixes:** `docs/DEFERRED-FIXES.md`
 
 ## License
 
