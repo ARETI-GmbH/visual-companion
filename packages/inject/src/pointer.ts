@@ -50,7 +50,12 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
       const dx = Math.abs(e.clientX - regionStart.x);
       const dy = Math.abs(e.clientY - regionStart.y);
       if (dx > 5 || dy > 5) {
-        await emitRegion(dispatcher, regionStart, { x: e.clientX, y: e.clientY });
+        const start = regionStart;
+        const end = { x: e.clientX, y: e.clientY };
+        await emitRegion(dispatcher, start, end);
+        const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
+        const w = Math.abs(end.x - start.x), h = Math.abs(end.y - start.y);
+        overlay.showSelectedRegion(x, y, w, h);
         regionStart = null;
         overlay.hideRegionBox();
         e.preventDefault(); e.stopPropagation();
@@ -64,8 +69,19 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
     if (!altDown) return;
     e.preventDefault(); e.stopPropagation();
     const el = e.target as Element;
+    const sel = uniqueSelector(el);
+    overlay.showSelected(el, sel);
     await emitPointer(dispatcher, el);
   }, true);
+
+  // Escape clears the persistent selection so the user can reset without
+  // having to click an empty spot.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      overlay.hideSelected();
+      overlay.hideSelectedRegion();
+    }
+  });
 }
 
 async function emitPointer(dispatcher: Dispatcher, el: Element): Promise<void> {

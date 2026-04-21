@@ -64,10 +64,12 @@ function sendData(socket: WebSocket, data: string): void {
 
 export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions): PtyBridgeControl {
   let currentPty: IPty | null = null;
+  let currentSocket: WebSocket | null = null;
   const inputListeners = new Set<(d: string) => void>();
 
   app.get('/_companion/pty', { websocket: true } as any, (conn: any) => {
     const socket: WebSocket = conn.socket ?? conn;
+    currentSocket = socket;
 
     // If no claude binary, tell the user exactly what's wrong.
     if (!CLAUDE_BIN) {
@@ -147,12 +149,20 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     socket.on('close', () => {
       try { pty.kill(); } catch {}
       currentPty = null;
+      if (currentSocket === socket) currentSocket = null;
     });
   });
 
   return {
+    // Render text in the xterm display on the right pane. Goes via the
+    // same WebSocket the PTY streams claude's stdout on, so claude sees
+    // it in the scrollback exactly as if it were its own output — but
+    // we do NOT write to claude's stdin, which would make ANSI sequences
+    // get parsed as keystrokes and vanish silently.
     writeToTerminal(text: string) {
-      if (currentPty) currentPty.write(text);
+      if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+        currentSocket.send(JSON.stringify({ type: 'data', data: text }));
+      }
     },
     onTerminalInput(handler) {
       inputListeners.add(handler);

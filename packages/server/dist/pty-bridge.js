@@ -50,9 +50,11 @@ function sendData(socket, data) {
 }
 export function registerPtyBridge(app, opts) {
     let currentPty = null;
+    let currentSocket = null;
     const inputListeners = new Set();
     app.get('/_companion/pty', { websocket: true }, (conn) => {
         const socket = conn.socket ?? conn;
+        currentSocket = socket;
         // If no claude binary, tell the user exactly what's wrong.
         if (!CLAUDE_BIN) {
             sendData(socket, '\r\n\x1b[31m[visual-companion] Could not find the `claude` CLI binary.\x1b[0m\r\n' +
@@ -119,12 +121,20 @@ export function registerPtyBridge(app, opts) {
             }
             catch { }
             currentPty = null;
+            if (currentSocket === socket)
+                currentSocket = null;
         });
     });
     return {
+        // Render text in the xterm display on the right pane. Goes via the
+        // same WebSocket the PTY streams claude's stdout on, so claude sees
+        // it in the scrollback exactly as if it were its own output — but
+        // we do NOT write to claude's stdin, which would make ANSI sequences
+        // get parsed as keystrokes and vanish silently.
         writeToTerminal(text) {
-            if (currentPty)
-                currentPty.write(text);
+            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+                currentSocket.send(JSON.stringify({ type: 'data', data: text }));
+            }
         },
         onTerminalInput(handler) {
             inputListeners.add(handler);
