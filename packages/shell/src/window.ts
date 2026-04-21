@@ -20,8 +20,6 @@ initTerminal({ container: document.getElementById('terminal')! });
 initBufferPanel({
   panel: document.getElementById('buffer-panel')!,
   chipsEl: document.getElementById('buffer-chips')!,
-  sendBtn: document.getElementById('btn-send-selections')!,
-  clearBtn: document.getElementById('btn-clear-selections')!,
 });
 
 // Draggable divider

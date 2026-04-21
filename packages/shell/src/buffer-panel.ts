@@ -11,27 +11,25 @@ interface BufferItem {
 export interface BufferPanelOptions {
   panel: HTMLElement;
   chipsEl: HTMLElement;
-  sendBtn: HTMLElement;
-  clearBtn: HTMLElement;
 }
 
 /**
- * Multi-select chip panel above the terminal.
+ * Multi-select chip list above the terminal.
  *
  * Connects to the companion WS to receive buffer-update broadcasts
- * (single source of truth lives on the daemon). Renders one chip per
- * buffered selection. Chip actions map back to server events:
- *   - click chip        → highlight in iframe (pulse the element)
- *   - x on chip         → remove-selection
- *   - "Send" button     → send-selections (programmatic Enter in claude)
- *   - "Clear" button    → clear-selection (same effect as Esc in iframe)
- *
- * Panel hides itself when the buffer is empty (is-empty class).
+ * (server is the single source of truth). Renders one row per pick.
+ * Actions map back to server events:
+ *   - click chip body      → highlight the element in the iframe
+ *   - double-click label   → rename (custom name shown in claude's prefix)
+ *   - click ×              → remove-selection
+ * Esc in the iframe clears everything (no clear button in the panel —
+ * Esc is one keystroke and the chips already carry ×). "Send" was also
+ * removed: the sticky prefix already piggybacks on the next Enter the
+ * user hits in claude's prompt, so a dedicated button was redundant.
  */
 export function initBufferPanel(opts: BufferPanelOptions): void {
-  const { panel, chipsEl, sendBtn, clearBtn } = opts;
+  const { panel, chipsEl } = opts;
 
-  // Small reconnect loop so shell survives a daemon restart.
   let ws: WebSocket | null = null;
   let reconnectMs = 1000;
   function connect(): void {
@@ -58,6 +56,43 @@ export function initBufferPanel(opts: BufferPanelOptions): void {
     }
   }
 
+  function startRename(labelEl: HTMLElement, item: BufferItem): void {
+    if (labelEl.classList.contains('editing')) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = item.label;
+    input.className = 'label editing';
+    input.size = Math.max(item.label.length, 8);
+    labelEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let committed = false;
+    const commit = (save: boolean): void => {
+      if (committed) return;
+      committed = true;
+      if (save) {
+        const next = input.value.trim() || item.label;
+        if (next !== item.label) {
+          sendRaw({ type: 'rename-selection', payload: { id: item.id, label: next } });
+        }
+      }
+      // The buffer-update broadcast from server will rerender; until
+      // then, swap the input back for a plain span so the UI doesn't
+      // look stuck on the old in-progress value.
+      const span = document.createElement('span');
+      span.className = 'label';
+      span.textContent = save ? (input.value.trim() || item.label) : item.label;
+      span.title = 'Doppelklick zum Umbenennen';
+      input.replaceWith(span);
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); commit(false); }
+    });
+    input.addEventListener('blur', () => commit(true));
+  }
+
   function render(items: BufferItem[]): void {
     panel.classList.toggle('is-empty', items.length === 0);
     chipsEl.innerHTML = '';
@@ -67,25 +102,31 @@ export function initBufferPanel(opts: BufferPanelOptions): void {
       chip.title = `${item.selector} · ${item.pathname}${item.textPreview ? ' — "' + item.textPreview + '"' : ''}`;
 
       const dot = document.createElement('span'); dot.className = 'dot';
-      const label = document.createElement('span'); label.className = 'label'; label.textContent = item.label;
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = item.label;
+      label.title = 'Doppelklick zum Umbenennen';
       const sel = document.createElement('span'); sel.className = 'sel';
       sel.textContent = shortSelector(item.selector);
       const x = document.createElement('span'); x.className = 'x'; x.textContent = '×';
-      x.title = 'Remove';
+      x.title = 'Entfernen';
 
       chip.append(dot, label, sel, x);
 
       chip.addEventListener('click', (ev) => {
         if (ev.target === x) return;
-        // Scroll the element into view and pulse it — confirms to
-        // the user which chip maps to which element on the page,
-        // especially useful with many picks. Uses the same HTTP
-        // endpoint the MCP server calls for highlight_element.
+        if (ev.target === label) return; // label reserved for dblclick rename
+        if ((ev.target as HTMLElement).classList?.contains('editing')) return;
+        // Pulse the element in the iframe so user can map chip → element.
         void fetch('/_companion/mcp/highlight_element', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ selector: item.selector, duration_ms: 900 }),
         });
+      });
+      label.addEventListener('dblclick', (ev) => {
+        ev.stopPropagation();
+        startRename(label, item);
       });
       x.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -96,17 +137,10 @@ export function initBufferPanel(opts: BufferPanelOptions): void {
     }
   }
 
-  sendBtn.addEventListener('click', () => {
-    sendRaw({ type: 'send-selections' });
-  });
-  clearBtn.addEventListener('click', () => {
-    sendRaw({ type: 'clear-selection' });
-  });
-
   connect();
 }
 
 function shortSelector(s: string): string {
-  if (s.length <= 48) return s;
-  return '…' + s.slice(-46);
+  if (s.length <= 60) return s;
+  return '…' + s.slice(-58);
 }
