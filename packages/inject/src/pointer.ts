@@ -70,7 +70,7 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
     regionStart = { x: e.clientX, y: e.clientY };
   }, true);
 
-  document.addEventListener('mouseup', async (e) => {
+  document.addEventListener('mouseup', (e) => {
     if (!pickingActive) { regionStart = null; return; }
     if (regionStart) {
       const dx = Math.abs(e.clientX - regionStart.x);
@@ -78,19 +78,20 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
       if (dx > 5 || dy > 5) {
         const start = regionStart;
         const end = { x: e.clientX, y: e.clientY };
-        // Overlay frame for the region pick will appear via the
-        // buffer-update round-trip from the server — same code-path
-        // as element picks, so multiple regions coexist cleanly.
-        await emitRegion(dispatcher, start, end);
         regionStart = null;
         overlay.hideRegionBox();
-        // mouseup is the end of the drag; the browser still
-        // dispatches a click right after. We don't want that click
-        // to turn into a second (element) pick on top of the region
-        // we just captured.
+        // Critical ordering: set suppressNextClick BEFORE we kick
+        // off emitRegion. emitRegion awaits screenshot capture +
+        // source-map lookup (hundreds of ms); meanwhile the browser
+        // is about to fire the post-mouseup `click` synchronously.
+        // Previously the flag was set after await, so the click
+        // handler saw suppressNextClick=false and the drag would
+        // ALSO produce an element pick — that's the "body selected
+        // on every drag" bug users kept hitting.
         suppressNextClick = true;
-        setTimeout(() => { suppressNextClick = false; }, 150);
+        setTimeout(() => { suppressNextClick = false; }, 500);
         e.preventDefault(); e.stopPropagation();
+        void emitRegion(dispatcher, start, end);
         return;
       }
     }
