@@ -2,14 +2,20 @@
 /**
  * /visual-companion [url] entry point
  *
+ * In a project directory, `/visual-companion` with NO arguments should
+ * just work: start the dev server (if not running), learn its URL, open
+ * the window. Explicit URL arg bypasses all auto-detection.
+ *
  * Pipeline:
- *  1. Resolve URL (CLI arg → .visual-companion.json → package.json scripts.dev)
- *  2. First-run bootstrap: npm install if node_modules missing
- *  3. Rebuild if dist/ artifacts missing
- *  4. Check if target URL is reachable; if not, auto-start dev server
- *  5. Spawn companion daemon, wait for "READY port=XXXX"
- *  6. Launch Chrome in app-mode with isolated profile
- *  7. Exit (daemon keeps running, self-shutdown via watchdog)
+ *  1. First-run bootstrap: npm install / build if needed
+ *  2. Resolve URL:
+ *     a) CLI arg or config default → use directly, probe port, start dev if needed
+ *     b) No hint → must have a dev command. Start dev server, parse its
+ *        stdout/stderr for a localhost URL ("http://localhost:NNNN").
+ *  3. Spawn companion daemon, wait for "READY port=XXXX"
+ *  4. Launch Chrome in app-mode with isolated profile, passing the
+ *     upstream URL so the shell can show it in the URL bar (not /app/).
+ *  5. Exit (daemon keeps running, self-shutdown via 60s watchdog)
  */
 
 const { spawn, spawnSync } = require('node:child_process');
@@ -27,22 +33,7 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
 (async function main() {
   const cwd = process.cwd();
 
-  // 1. Resolve URL
-  let url = argv.find((a) => !a.startsWith('--'));
-  let urlFromAutoDetect = false;
-  if (!url) {
-    url = autoDetectUrl(cwd);
-    urlFromAutoDetect = true;
-  }
-  if (!url) {
-    console.error('visual-companion: no URL provided and auto-detection failed.');
-    console.error('  usage: /visual-companion <url>');
-    console.error('  hint: create .visual-companion.json with { "default_url": "http://localhost:3000" }');
-    console.error('        or ensure package.json scripts.dev contains --port N or -p N');
-    process.exit(1);
-  }
-
-  // 2. First-run bootstrap
+  // 1. First-run bootstrap
   if (!fs.existsSync(nodeModulesDir)) {
     console.log('visual-companion: first run — installing dependencies (this takes ~1 minute)...');
     const install = spawnSync('npm', ['install'], { cwd: pluginRoot, stdio: 'inherit' });
@@ -51,8 +42,6 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
       process.exit(1);
     }
   }
-
-  // 3. Rebuild if needed
   for (const f of [serverEntry, shellDir, injectFile]) {
     if (!fs.existsSync(f)) {
       console.log('visual-companion: missing build artifact, running npm run build...');
@@ -65,57 +54,66 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
     }
   }
 
-  // 4. Port-reachability + dev-server autostart
+  // 2. Resolve URL
+  let explicitUrl = argv.find((a) => !a.startsWith('--'));
+  let hintedUrl = explicitUrl || autoDetectUrl(cwd); // best-effort guess
+  const devCommand = detectDevCommand(cwd);
+  let url = null;
   let devServerPid = null;
-  const { hostname, portNum } = parseHostPort(url);
-  const reachable = await checkPortReachable(hostname, portNum, 500);
 
-  if (!reachable) {
-    if (!isLocalhost(hostname)) {
-      console.error('visual-companion: target URL', url, 'is not reachable and not localhost — not starting dev server.');
+  if (hintedUrl) {
+    // We think we know the URL. Probe it.
+    const { hostname, portNum } = parseHostPort(hintedUrl);
+    const reachable = await checkPortReachable(hostname, portNum, 500);
+    if (reachable) {
+      url = hintedUrl;
+      console.log('visual-companion: using', url, '(already running)');
+    } else if (!isLocalhost(hostname)) {
+      console.error('visual-companion: target URL', hintedUrl, 'is not reachable (not localhost — not starting a dev server).');
       process.exit(1);
-    }
-    const devCommand = detectDevCommand(cwd);
-    if (!devCommand) {
-      console.error('visual-companion:', hostname + ':' + portNum, 'not reachable and no dev command found in .visual-companion.json or package.json scripts.dev.');
-      console.error('  options:');
-      console.error('  1. start your dev server manually, then re-run /visual-companion');
-      console.error('  2. add "start_command": "npm run dev" to .visual-companion.json');
-      console.error('  3. ensure package.json has scripts.dev defined');
-      process.exit(1);
-    }
-    console.log('visual-companion:', hostname + ':' + portNum, 'not reachable — starting dev server with:', devCommand.display);
-    const devServer = spawn(devCommand.cmd, devCommand.args, {
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd,
-      env: process.env,
-    });
-    devServerPid = devServer.pid;
-    // forward dev-server output so user sees startup progress
-    devServer.stdout?.on('data', (chunk) => process.stdout.write('[dev] ' + chunk.toString()));
-    devServer.stderr?.on('data', (chunk) => process.stderr.write('[dev] ' + chunk.toString()));
-    devServer.on('exit', (code) => {
-      if (code !== 0 && code !== null) {
-        console.error('visual-companion: dev server exited early, code=', code);
+    } else if (devCommand) {
+      // Expected URL not reachable, start dev server and wait for that port
+      console.log(`visual-companion: starting dev server (${devCommand.display}), expecting ${hintedUrl} ...`);
+      const { pid } = startDevServer(cwd, devCommand);
+      devServerPid = pid;
+      const ready = await waitForPortOrStdoutUrl(hostname, portNum, DEV_STDOUT_BUFFER, 45_000);
+      if (!ready.ok) {
+        console.error(`visual-companion: dev server started but ${hostname}:${portNum} still not reachable after 45s.`);
+        console.error('  check the [dev] output above for errors, or run the dev server manually and retry.');
+        try { process.kill(devServerPid, 'SIGTERM'); } catch {}
+        process.exit(1);
       }
-    });
-
-    const ready = await waitForPort(hostname, portNum, 30_000);
-    if (!ready) {
-      console.error('visual-companion: dev server started but', hostname + ':' + portNum, 'still not reachable after 30s.');
+      url = ready.url || hintedUrl;
+      console.log('visual-companion: dev server ready on', url);
+    } else {
+      console.error('visual-companion:', hostname + ':' + portNum, 'is not reachable and no dev command found.');
+      console.error('  start your dev server manually, or add a `"dev"` script to package.json, or use .visual-companion.json.');
+      process.exit(1);
+    }
+  } else if (devCommand) {
+    // No URL hint at all, but we have a dev command. Start it and parse its output.
+    console.log(`visual-companion: no URL hint — starting dev server (${devCommand.display}) and detecting URL from its output ...`);
+    const { pid } = startDevServer(cwd, devCommand);
+    devServerPid = pid;
+    const detected = await detectUrlFromStdout(DEV_STDOUT_BUFFER, 45_000);
+    if (!detected) {
+      console.error('visual-companion: dev server started but did not print a detectable localhost URL within 45s.');
+      console.error('  add `"default_url": "http://localhost:XXXX"` to .visual-companion.json to skip auto-detection.');
       try { process.kill(devServerPid, 'SIGTERM'); } catch {}
       process.exit(1);
     }
-    console.log('visual-companion: dev server ready on', hostname + ':' + portNum);
-    devServer.unref();
-    devServer.stdout?.removeAllListeners('data');
-    devServer.stderr?.removeAllListeners('data');
-  } else if (urlFromAutoDetect) {
-    console.log('visual-companion: using auto-detected URL', url, '(already running)');
+    url = detected;
+    console.log('visual-companion: dev server ready on', url);
+  } else {
+    console.error('visual-companion: no URL given, no .visual-companion.json, and no package.json scripts.dev — cannot proceed.');
+    console.error('  usage:');
+    console.error('    /visual-companion                      # in a project with scripts.dev');
+    console.error('    /visual-companion http://host:port     # explicit URL');
+    console.error('    /visual-companion                      # with .visual-companion.json { "default_url": "...", "start_command": "..." }');
+    process.exit(1);
   }
 
-  // 5. Spawn companion daemon
+  // 3. Spawn companion daemon
   const serverEnv = {
     ...process.env,
     VISUAL_COMPANION_PORT: '0',
@@ -139,15 +137,12 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
     if (m) {
       const port = m[1];
       launchChrome(port, server.pid, url);
-      // Close the parent's end of the pipe so the daemon won't block on
-      // future stdout writes. The daemon handles EPIPE gracefully.
       server.stdout.removeAllListeners('data');
       try { server.stdout.destroy(); } catch {}
       server.unref();
       setTimeout(() => process.exit(0), 200);
     }
   });
-
   server.on('exit', (code) => {
     if (code !== 0 && code !== null) {
       console.error('visual-companion server exited early, code=', code);
@@ -161,9 +156,13 @@ const nodeModulesDir = path.join(pluginRoot, 'node_modules');
 
 // --- helpers -------------------------------------------------------------
 
-function launchChrome(port, serverPid, targetUrl) {
+/** Shared buffer for dev-server stdout/stderr text, scanned for URLs. */
+const DEV_STDOUT_BUFFER = { text: '' };
+
+function launchChrome(port, serverPid, upstreamUrl) {
   const profileDir = `/tmp/visual-companion-${serverPid}`;
-  const appUrl = `http://localhost:${port}/window/?target=${encodeURIComponent('/app/')}`;
+  const qs = new URLSearchParams({ target: '/app/', upstream: upstreamUrl });
+  const appUrl = `http://localhost:${port}/window/?${qs.toString()}`;
   const chrome = spawn('open', [
     '-na', 'Google Chrome',
     '--args',
@@ -173,7 +172,7 @@ function launchChrome(port, serverPid, targetUrl) {
     '--no-default-browser-check',
   ], { detached: true, stdio: 'ignore' });
   chrome.unref();
-  console.log(`visual-companion: opening ${targetUrl} on port ${port}`);
+  console.log(`visual-companion: opening ${upstreamUrl} (daemon port ${port})`);
 }
 
 function autoDetectUrl(cwd) {
@@ -191,10 +190,10 @@ function autoDetectUrl(cwd) {
       const dev = j?.scripts?.dev || '';
       const m = dev.match(/--port[= ](\d+)/) || dev.match(/-p[= ](\d+)/) || dev.match(/PORT=(\d+)/);
       if (m) return `http://localhost:${m[1]}`;
-      // Framework defaults (best-effort)
       if (/\bnext\b/.test(dev)) return 'http://localhost:3000';
       if (/\bvite\b/.test(dev)) return 'http://localhost:5173';
       if (/\bastro\b/.test(dev)) return 'http://localhost:4321';
+      if (/\bnuxt\b/.test(dev)) return 'http://localhost:3000';
     } catch {}
   }
   return null;
@@ -202,9 +201,10 @@ function autoDetectUrl(cwd) {
 
 function parseHostPort(rawUrl) {
   const u = new URL(rawUrl);
-  const hostname = u.hostname;
-  const portNum = u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80);
-  return { hostname, portNum };
+  return {
+    hostname: u.hostname,
+    portNum: u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80),
+  };
 }
 
 function isLocalhost(hostname) {
@@ -229,15 +229,6 @@ function checkPortReachable(host, port, timeoutMs) {
   });
 }
 
-async function waitForPort(host, port, totalMs) {
-  const start = Date.now();
-  while (Date.now() - start < totalMs) {
-    if (await checkPortReachable(host, port, 500)) return true;
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  return false;
-}
-
 function detectDevCommand(cwd) {
   const config = path.join(cwd, '.visual-companion.json');
   if (fs.existsSync(config)) {
@@ -254,7 +245,6 @@ function detectDevCommand(cwd) {
     try {
       const j = JSON.parse(fs.readFileSync(pkg, 'utf8'));
       if (j?.scripts?.dev) {
-        // Detect which package manager is in use
         if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) return { cmd: 'pnpm', args: ['dev'], display: 'pnpm dev' };
         if (fs.existsSync(path.join(cwd, 'yarn.lock'))) return { cmd: 'yarn', args: ['dev'], display: 'yarn dev' };
         if (fs.existsSync(path.join(cwd, 'bun.lockb'))) return { cmd: 'bun', args: ['run', 'dev'], display: 'bun run dev' };
@@ -263,4 +253,91 @@ function detectDevCommand(cwd) {
     } catch {}
   }
   return null;
+}
+
+/**
+ * Spawn the dev server detached; tap its stdout+stderr into DEV_STDOUT_BUFFER
+ * for URL detection, and forward it with "[dev]" prefix so the user sees
+ * startup progress. Returns { pid }.
+ */
+function startDevServer(cwd, devCommand) {
+  const devServer = spawn(devCommand.cmd, devCommand.args, {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd,
+    env: process.env,
+  });
+  const tap = (stream, writer) => {
+    stream?.on('data', (chunk) => {
+      const str = chunk.toString();
+      DEV_STDOUT_BUFFER.text += str;
+      // Cap buffer to last 32kb to avoid unbounded growth.
+      if (DEV_STDOUT_BUFFER.text.length > 32768) {
+        DEV_STDOUT_BUFFER.text = DEV_STDOUT_BUFFER.text.slice(-32768);
+      }
+      writer.write('[dev] ' + str);
+    });
+  };
+  tap(devServer.stdout, process.stdout);
+  tap(devServer.stderr, process.stderr);
+  devServer.on('exit', (code) => {
+    if (code !== 0 && code !== null) {
+      console.error('visual-companion: dev server exited early, code=', code);
+    }
+  });
+  devServer.unref();
+  return { pid: devServer.pid };
+}
+
+/**
+ * Extract the first `http(s)://host:port` URL from a buffer, stripping ANSI
+ * escape codes first. Returns null if none found.
+ */
+function extractLocalhostUrl(text) {
+  const clean = text.replace(/\x1b\[[0-9;]*m/g, ''); // strip ANSI color codes
+  const m = clean.match(/(https?:\/\/(?:localhost|127\.0\.0\.1)(?::(\d+))?(?:\/[^\s'"`<>]*)?)/);
+  if (!m) return null;
+  return m[1].replace(/\/+$/, ''); // trim trailing slash(es)
+}
+
+/** Poll the dev-server stdout buffer until a URL appears or timeout. */
+async function detectUrlFromStdout(buffer, totalMs) {
+  const start = Date.now();
+  while (Date.now() - start < totalMs) {
+    const url = extractLocalhostUrl(buffer.text);
+    if (url) {
+      // Also probe the port to confirm the server is actually accepting connections
+      try {
+        const { hostname, portNum } = parseHostPort(url);
+        if (await checkPortReachable(hostname, portNum, 500)) {
+          return `http://${hostname}:${portNum}`;
+        }
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return null;
+}
+
+/**
+ * Wait for EITHER the expected port to be reachable OR the dev server to
+ * print a URL (which wins if it's different from the expected port — common
+ * when the default port is already taken and a framework falls back to +1).
+ */
+async function waitForPortOrStdoutUrl(host, port, buffer, totalMs) {
+  const start = Date.now();
+  while (Date.now() - start < totalMs) {
+    if (await checkPortReachable(host, port, 500)) return { ok: true, url: `http://${host}:${port}` };
+    const urlFromStdout = extractLocalhostUrl(buffer.text);
+    if (urlFromStdout) {
+      try {
+        const { hostname, portNum } = parseHostPort(urlFromStdout);
+        if (await checkPortReachable(hostname, portNum, 500)) {
+          return { ok: true, url: `http://${hostname}:${portNum}` };
+        }
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { ok: false };
 }
