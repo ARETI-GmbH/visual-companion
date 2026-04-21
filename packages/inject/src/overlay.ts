@@ -42,10 +42,13 @@ export function createOverlay(): Overlay {
   const selectedLabel = shadow.querySelector('.selected .label') as HTMLElement;
   const selectedRegion = shadow.querySelector('.selected-region') as HTMLElement;
 
-  // Persistent anchors: reposition on scroll/resize so the frame stays
-  // locked to the element/region the user actually selected.
+  // Persistent anchors: reposition on scroll/resize so the frames stay
+  // locked to the thing the user selected even if the page moves.
   let selectedEl: Element | null = null;
-  let selectedRegionRect: { x: number; y: number; w: number; h: number } | null = null;
+  // selected-region is stored in DOCUMENT space (viewport + scroll at
+  // time of selection) so scroll/resize reposition the on-screen frame
+  // to the same content region rather than the same pixel region.
+  let selectedRegionDoc: { x: number; y: number; w: number; h: number } | null = null;
   function reposition(): void {
     if (selectedEl) {
       const r = selectedEl.getBoundingClientRect();
@@ -54,9 +57,14 @@ export function createOverlay(): Overlay {
         width: r.width + 'px', height: r.height + 'px',
       });
     }
-    // selected-region stores viewport-relative coords; re-anchor on scroll
-    // would be wrong (user selected a screen region, not a DOM region) —
-    // keep it pinned to page-space by converting from viewport at selection time.
+    if (selectedRegionDoc) {
+      Object.assign(selectedRegion.style, {
+        top: (selectedRegionDoc.y - window.scrollY) + 'px',
+        left: (selectedRegionDoc.x - window.scrollX) + 'px',
+        width: selectedRegionDoc.w + 'px',
+        height: selectedRegionDoc.h + 'px',
+      });
+    }
   }
   window.addEventListener('scroll', reposition, true);
   window.addEventListener('resize', reposition);
@@ -90,7 +98,7 @@ export function createOverlay(): Overlay {
     hideRegionBox() { region.style.display = 'none'; },
     showSelected(el, selector) {
       selectedEl = el;
-      selectedRegionRect = null;
+      selectedRegionDoc = null;
       selectedRegion.style.display = 'none';
       const r = el.getBoundingClientRect();
       Object.assign(selected.style, {
@@ -103,16 +111,22 @@ export function createOverlay(): Overlay {
       selectedEl = null;
       selected.style.display = 'none';
     },
-    showSelectedRegion(x, y, w, h) {
+    showSelectedRegion(vx, vy, w, h) {
       selectedEl = null;
       selected.style.display = 'none';
-      selectedRegionRect = { x, y, w, h };
+      // Store in document space so scroll/resize reposition correctly.
+      selectedRegionDoc = {
+        x: vx + window.scrollX,
+        y: vy + window.scrollY,
+        w, h,
+      };
       Object.assign(selectedRegion.style, {
-        display: 'block', top: y + 'px', left: x + 'px', width: w + 'px', height: h + 'px',
+        display: 'block', top: vy + 'px', left: vx + 'px',
+        width: w + 'px', height: h + 'px',
       });
     },
     hideSelectedRegion() {
-      selectedRegionRect = null;
+      selectedRegionDoc = null;
       selectedRegion.style.display = 'none';
     },
   };

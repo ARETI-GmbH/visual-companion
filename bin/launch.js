@@ -206,10 +206,14 @@ const DEV_STDOUT_BUFFER = { text: '' };
           const outerPid = findOuterClaudePid();
           if (outerPid) {
             console.log(
-              `visual-companion: closing outer claude (pid ${outerPid}) — use Cmd+W if your terminal doesn't auto-close.`,
+              `visual-companion: closing outer claude (pid ${outerPid})`,
             );
             try { process.kill(outerPid, 'SIGTERM'); } catch {}
           }
+          // Then try to close the terminal window itself. Try every
+          // known macOS terminal app; whichever one owns the frontmost
+          // window will respond, the rest will error silently.
+          closeFrontTerminalWindow();
         }
         process.exit(0);
       }, 300);
@@ -233,6 +237,36 @@ const DEV_STDOUT_BUFFER = { text: '' };
  * → bash subshell → node launch.js chain). Walks up the process tree until
  * we find a binary called `claude`; returns 0 if nothing matching is found.
  */
+/**
+ * Try to close the terminal window the user launched us from. macOS-only,
+ * best-effort: we don't know which terminal app the user runs, so we try
+ * the common ones. Whichever app owns the frontmost window will respond.
+ * If we can't close it automatically, the user sees a shell prompt and
+ * can Cmd+W manually.
+ */
+function closeFrontTerminalWindow() {
+  if (process.platform !== 'darwin') return;
+  const scripts = [
+    // Apple Terminal, iTerm2 (both iTerm & iTerm2 bundle names exist)
+    'tell application "Terminal" to close (front window) saving no',
+    'tell application "iTerm" to tell current window to close',
+    'tell application "iTerm2" to tell current window to close',
+    // Warp, Hyper — they support close window via System Events
+    'tell application "Warp" to tell application "System Events" to keystroke "w" using {command down, shift down}',
+    'tell application "Hyper" to tell application "System Events" to keystroke "w" using command down',
+  ];
+  for (const s of scripts) {
+    try {
+      execSync(`osascript -e ${JSON.stringify(s)}`, {
+        timeout: 1500,
+        stdio: 'ignore',
+      });
+    } catch {
+      // expected — only one of these matches the actual frontmost app
+    }
+  }
+}
+
 function findOuterClaudePid() {
   try {
     // process.ppid is the bash subshell. Walk up twice to be robust to

@@ -158,8 +158,19 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
     process.stderr.write(
       `[vc] commit OK: buf=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`,
     );
+    // Send the edit (delete + retype) and the Enter in TWO separate
+    // writes, with a short gap between them. A single combined write
+    // gets classified by Ink/Claude Code as a paste, which means the
+    // terminating \r becomes a literal newline in the prompt instead
+    // of a submit — that was the "user has to hit Enter twice" bug.
     const deletion = '\x7f'.repeat(userBuffer.length);
-    pty.write(deletion + pendingPrefix + userBuffer + '\r');
+    pty.write(deletion + pendingPrefix + userBuffer);
+    const pinned = pty;
+    setTimeout(() => {
+      try {
+        if (currentPty === pinned) pinned.write('\r');
+      } catch {}
+    }, 60);
     userBuffer = '';
     pendingPrefix = null;
     bufferValid = true;
