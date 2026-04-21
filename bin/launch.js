@@ -177,14 +177,16 @@ const DEV_STDOUT_BUFFER = { text: '' };
   // own process tree still intact. The daemon reads these env vars at
   // shutdown time to re-spawn a terminal with `claude --continue`,
   // completing the round-trip transformation.
+  let detectedTty = null;
+  let detectedTermApp = null;
   if (shouldCloseOuterClaude) {
-    const ownTty = findOwnTty();
-    const termApp = ownTty ? findTerminalAppForTty(ownTty) : null;
+    detectedTty = findOwnTty();
+    detectedTermApp = detectedTty ? findTerminalAppForTty(detectedTty) : null;
     console.log(
-      `visual-companion: terminal detection — tty=${ownTty ?? 'n/a'} app=${termApp ?? 'n/a (unsupported)'}`,
+      `visual-companion: terminal detection — tty=${detectedTty ?? 'n/a'} app=${detectedTermApp ?? 'n/a (unsupported — terminal will stay open)'}`,
     );
-    if (termApp) {
-      serverEnv.VISUAL_COMPANION_RETURN_APP = termApp;
+    if (detectedTermApp) {
+      serverEnv.VISUAL_COMPANION_RETURN_APP = detectedTermApp;
       serverEnv.VISUAL_COMPANION_RETURN_CWD = cwd;
     }
   }
@@ -213,6 +215,8 @@ const DEV_STDOUT_BUFFER = { text: '' };
       cwd,
       url,
       chromeProfileDir: `/tmp/visual-companion-${server.pid}`,
+      terminalTty: detectedTty,
+      terminalApp: detectedTermApp,
       launchedAt: Date.now(),
     }, null, 2));
   } catch {
@@ -312,46 +316,54 @@ function findOwnTty() {
  * 'iTerm', or null. We probe Terminal.app and iTerm2 — other apps
  * (Warp, Ghostty, kitty, Alacritty, …) aren't AppleScript-controllable
  * this way, so we give up silently and fall back to "user Cmd+W".
+ *
+ * NB: we talk to Terminal.app / iTerm directly — no `tell application
+ * "System Events"` probe. That would require the user to grant the
+ * "Accessibility" privilege to osascript in System Settings, which
+ * most people don't, so the probe would silently fail. Talking
+ * directly to Terminal.app only needs the per-app automation prompt
+ * (macOS asks once the first time), which everyone sees.
  */
 function findTerminalAppForTty(tty) {
   if (process.platform !== 'darwin') return null;
   const terminalAppProbe = `
-    tell application "System Events"
-      if not ((name of processes) contains "Terminal") then return ""
-    end tell
-    tell application "Terminal"
-      repeat with w in windows
-        repeat with t in tabs of w
-          if tty of t is "${tty}" then return "Terminal"
+    try
+      tell application "Terminal"
+        if (count of windows) is 0 then return ""
+        repeat with w in windows
+          repeat with t in tabs of w
+            if tty of t is "${tty}" then return "Terminal"
+          end repeat
         end repeat
-      end repeat
-    end tell
+      end tell
+    end try
     return ""
   `;
   const iTermProbe = `
-    tell application "System Events"
-      if not ((name of processes) contains "iTerm2") then return ""
-    end tell
-    tell application "iTerm"
-      repeat with w in windows
-        repeat with tb in tabs of w
-          tell current session of tb
-            if tty is "${tty}" then return "iTerm"
-          end tell
+    try
+      tell application "iTerm"
+        if (count of windows) is 0 then return ""
+        repeat with w in windows
+          repeat with tb in tabs of w
+            tell current session of tb
+              if tty is "${tty}" then return "iTerm"
+            end tell
+          end repeat
         end repeat
-      end repeat
-    end tell
+      end tell
+    end try
     return ""
   `;
   for (const script of [terminalAppProbe, iTermProbe]) {
     try {
       const out = execSync(`osascript -e ${JSON.stringify(script)}`, {
-        timeout: 2000,
+        timeout: 3000,
         encoding: 'utf8',
       }).trim();
       if (out === 'Terminal' || out === 'iTerm') return out;
-    } catch {
-      // app not running or not scriptable
+    } catch (err) {
+      // Keep trying — most common cause is the app not being installed
+      // or the user denying the automation prompt the first time.
     }
   }
   return null;
@@ -366,42 +378,53 @@ function closeTerminalTabByTty(tty, app) {
   let script = '';
   if (app === 'Terminal') {
     script = `
-      tell application "Terminal"
-        repeat with w in windows
-          repeat with t in tabs of w
-            if tty of t is "${tty}" then
-              close w saving no
-              return
-            end if
+      try
+        tell application "Terminal"
+          repeat with w in windows
+            repeat with t in tabs of w
+              if tty of t is "${tty}" then
+                close w saving no
+                return "closed"
+              end if
+            end repeat
           end repeat
-        end repeat
-      end tell
+        end tell
+      end try
+      return ""
     `;
   } else if (app === 'iTerm') {
     script = `
-      tell application "iTerm"
-        repeat with w in windows
-          repeat with tb in tabs of w
-            tell current session of tb
-              if tty is "${tty}" then
-                close w
-                return
-              end if
-            end tell
+      try
+        tell application "iTerm"
+          repeat with w in windows
+            repeat with tb in tabs of w
+              tell current session of tb
+                if tty is "${tty}" then
+                  close w
+                  return "closed"
+                end if
+              end tell
+            end repeat
           end repeat
-        end repeat
-      end tell
+        end tell
+      end try
+      return ""
     `;
   } else {
     return;
   }
   try {
-    execSync(`osascript -e ${JSON.stringify(script)}`, {
-      timeout: 2500,
-      stdio: 'ignore',
-    });
-  } catch {
-    // best-effort
+    const out = execSync(`osascript -e ${JSON.stringify(script)}`, {
+      timeout: 3000,
+      encoding: 'utf8',
+    }).trim();
+    console.log(
+      `visual-companion: close ${app} tty=${tty} → ${out === 'closed' ? 'closed' : 'no-match-or-denied'}`,
+    );
+  } catch (err) {
+    console.log(
+      `visual-companion: close ${app} tty=${tty} → error: ${(err && err.message) || err}`,
+    );
   }
 }
 

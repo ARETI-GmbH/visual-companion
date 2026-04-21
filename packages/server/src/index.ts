@@ -250,32 +250,36 @@ function spawnReturnTerminal(app: string, cwd: string): void {
   let script = '';
   if (app === 'Terminal') {
     script = `
-      tell application "Terminal"
-        activate
-        do script ${JSON.stringify(cmd)}
-      end tell
+      try
+        tell application "Terminal"
+          activate
+          do script ${JSON.stringify(cmd)}
+        end tell
+      end try
     `;
   } else if (app === 'iTerm') {
     script = `
-      tell application "iTerm"
-        activate
-        create window with default profile
-        tell current session of current window
-          write text ${JSON.stringify(cmd)}
+      try
+        tell application "iTerm"
+          activate
+          create window with default profile
+          tell current session of current window
+            write text ${JSON.stringify(cmd)}
+          end tell
         end tell
-      end tell
+      end try
     `;
   } else {
     return;
   }
-  try {
-    spawnSync('osascript', ['-e', script], {
-      timeout: 4000,
-      stdio: 'ignore',
-    });
-  } catch {
-    // best-effort
-  }
+  const result = spawnSync('osascript', ['-e', script], {
+    timeout: 4000,
+    encoding: 'utf8',
+  });
+  process.stderr.write(
+    `[vc] spawnReturnTerminal(${app}): status=${result.status} ` +
+      `stderr=${(result.stderr || '').trim()}\n`,
+  );
 }
 
 function startFileWatcher(cwd: string, onQuiet: () => void): () => void {
