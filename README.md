@@ -2,7 +2,7 @@
 
 **Split-Pane-Fenster für Claude-Code-Entwicklung:** deine Web-App läuft links
 durch einen transparenten Reverse-Proxy, eine Claude-Code-Session rechts.
-`Alt+Shift+Click` auf ein UI-Element (oder Drag für eine Region) legt es in
+`⌘+Click` auf ein UI-Element (oder `⌘+Drag` für eine Region) legt es in
 einen Multi-Select-Buffer — Claude bekommt DOM, Computed Styles, Screenshot,
 Source-Map und Ancestors per MCP, während Console-Logs, Network-Requests und
 Errors live in einen Ring-Buffer streamen, den Claude on-demand abfragt.
@@ -52,17 +52,18 @@ Alias: `/vc`. Ablauf:
 
 ## Elemente markieren
 
-**Hotkey `Alt+Shift`** (nicht nur `Alt` — Mac-Alt braucht man für
-Sonderzeichen wie `@` auf deutscher Tastatur).
+**Hotkey `⌘` (Cmd) halten.** Cmd allein hat auf macOS keine OS-Aktion,
+und alle Cmd-Kombos (Cmd+C, Cmd+V, Cmd+A) setzen eine vorhandene Selektion
+voraus — die Picker-Mode während Cmd-Hold stört das also nicht.
 
-- `Alt+Shift + Hover` — Live-Highlight mit CSS-Selektor-Label
-- `Alt+Shift + Click` — Element in den Buffer legen (orange)
-- `Alt+Shift + Drag` — Region auswählen (blau, bleibt genau beim gezogenen
+- `⌘ + Hover` — Live-Highlight mit CSS-Selektor-Label
+- `⌘ + Click` — Element in den Buffer legen (orange)
+- `⌘ + Drag` — Region auswählen (blau, bleibt genau beim gezogenen
   Rechteck; Claude bekommt zusätzlich den kleinsten umschließenden DOM-Knoten
   als Kontext)
 - `Esc` — ganzen Buffer leeren
 
-Picks akkumulieren — alles, was du Alt+Shift-selektierst, stapelt sich als
+Picks akkumulieren — alles, was du mit Cmd selektierst, stapelt sich als
 **Chip-Liste** oben im rechten Pane (über dem Claude-Terminal):
 
 - Farbpunkt zeigt Typ (orange=Element, blau=Region)

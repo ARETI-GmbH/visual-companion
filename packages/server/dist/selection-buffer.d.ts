@@ -32,7 +32,7 @@ export interface SelectionSummary {
     regionRect?: RegionRect;
 }
 /**
- * Multi-select buffer. Every Alt+Shift pick the user makes in the iframe
+ * Multi-select buffer. Every Cmd-pick the user makes in the iframe
  * accumulates here. The buffer is the source of truth for:
  *   - the sticky `[markiert: ...]` prefix injected into claude's prompt
  *   - the `get_pointed_elements` MCP tool

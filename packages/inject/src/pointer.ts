@@ -6,10 +6,14 @@ import { captureElementScreenshot } from './screenshot';
 import { lookupSourceLocation } from './source-map';
 
 export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
-  // Alt+Shift (not plain Alt) because on Mac Alt alone is used for
-  // special characters — Alt+L types "@" on a German layout — and
-  // having the picker activate on every Alt press swallowed clicks
-  // and swapped the cursor while the user was just typing.
+  // Cmd (metaKey) alone because on Mac:
+  //   - Cmd has no default OS action when held by itself
+  //   - Cmd combos (Cmd+C, Cmd+V, Cmd+A) only fire on a letter
+  //     keypress, and typically AFTER the user has already made a
+  //     selection — so the "picker mode while holding Cmd" window
+  //     doesn't collide with normal keyboard use
+  //   - Alt on Mac is needed for special chars (Alt+L = "@" on DE
+  //     layout), which made Alt-based activation disruptive
   let pickingActive = false;
   let regionStart: { x: number; y: number } | null = null;
   // Set briefly after a region-drag so the synthetic click that the
@@ -19,17 +23,18 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   // selected after drag" bug users saw).
   let suppressNextClick = false;
 
-  function setPicking(alt: boolean, shift: boolean): void {
-    const shouldBeActive = alt && shift;
+  function setPicking(meta: boolean): void {
+    const shouldBeActive = meta;
     if (shouldBeActive && !pickingActive) {
       pickingActive = true;
       document.body.style.cursor = 'crosshair';
-      // Block native text-selection while picking so region drags
-      // don't also highlight text on the page.
+      // Prevent NEW text selection while picking — region drags
+      // otherwise also select text. Does NOT clear existing
+      // selections: the user might be holding Cmd to type Cmd+C
+      // on already-selected text, and zapping their selection
+      // would silently break copy.
       document.body.style.userSelect = 'none';
       (document.body.style as any).webkitUserSelect = 'none';
-      // Clear any already-selected text from before picking started.
-      window.getSelection()?.removeAllRanges();
     } else if (!shouldBeActive && pickingActive) {
       pickingActive = false;
       document.body.style.cursor = '';
@@ -42,16 +47,15 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   }
   // Keyboard events only reach the iframe while the iframe has focus.
   // If the user was typing in claude's terminal and then moves the
-  // mouse over the iframe with Alt+Shift already held, keydown never
-  // fired on us — so picking wouldn't activate until they clicked.
-  // MouseEvents carry altKey/shiftKey too, so we also sync from
-  // mousemove: hovering into the iframe with the modifiers held
-  // flips us into picking mode immediately. Cheap (same state
-  // transitions as keyboard path).
-  document.addEventListener('keydown', (e) => setPicking(e.altKey, e.shiftKey));
-  document.addEventListener('keyup', (e) => setPicking(e.altKey, e.shiftKey));
-  document.addEventListener('mousemove', (e) => setPicking(e.altKey, e.shiftKey), true);
-  document.addEventListener('mouseenter', (e) => setPicking(e.altKey, e.shiftKey));
+  // mouse over the iframe with Cmd already held, keydown never fired
+  // on us — so picking wouldn't activate until they clicked.
+  // MouseEvents carry metaKey too, so we also sync from mousemove:
+  // hovering into the iframe with Cmd held flips us into picking
+  // mode immediately. Cheap (same state transitions as keyboard path).
+  document.addEventListener('keydown', (e) => setPicking(e.metaKey));
+  document.addEventListener('keyup', (e) => setPicking(e.metaKey));
+  document.addEventListener('mousemove', (e) => setPicking(e.metaKey), true);
+  document.addEventListener('mouseenter', (e) => setPicking(e.metaKey));
 
   // Belt-and-braces: prevent any selectstart while picking is active
   // (covers edge cases where the style reset didn't propagate).
@@ -74,6 +78,12 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
 
   document.addEventListener('mousedown', (e) => {
     if (!pickingActive || e.button !== 0) return;
+    // Clear any existing text selection — at THIS point the user has
+    // committed to a pick (mouse is going down inside the iframe with
+    // Cmd held), so whatever text they had highlighted before can be
+    // dropped. Doing this on mousedown instead of modifier-down keeps
+    // Cmd+C-on-selected-text working.
+    window.getSelection()?.removeAllRanges();
     // Swallow the mousedown so the browser doesn't start its own
     // text-selection drag underneath our region box.
     e.preventDefault();

@@ -8,7 +8,7 @@ const port = parseInt(process.env.VISUAL_COMPANION_PORT ?? '0', 10);
 const client = port > 0 ? new DaemonClient(port) : null;
 
 const TOOLS = [
-  { name: 'get_pointed_element', description: 'Get the MOST RECENT element the user Alt+Shift-clicked / region-selected, with full context (DOM, computed styles, screenshot, source-map, ancestors). Use when the prefix has a SINGLE [markiert: …] entry or the user refers to "this element", "das hier", "the thing I selected".', inputSchema: { type: 'object', properties: {} } },
+  { name: 'get_pointed_element', description: 'Get the MOST RECENT element the user Cmd-clicked / region-selected, with full context (DOM, computed styles, screenshot, source-map, ancestors). Use when the prefix has a SINGLE [markiert: …] entry or the user refers to "this element", "das hier", "the thing I selected".', inputSchema: { type: 'object', properties: {} } },
   { name: 'get_pointed_elements', description: 'Get the FULL multi-select buffer — every element currently in the chip panel, in pick order. Returns an array of {id, label, kind, url, pathname, selector, textPreview, payload}. The label ("#1", "#2", …) matches the labels the user sees in the shell panel and references in their prompt ("schau dir #1 und #3 an"). Use whenever the prefix contains multiple [markiert: #1=…, #2=…] entries or the user refers to numbered boxes.', inputSchema: { type: 'object', properties: {} } },
   { name: 'get_pointed_history', description: 'Get the last N pointer events from the event store — includes selections that have since been removed from the buffer. Use when the user says "the one before that" or refers to an earlier pick that\'s no longer in the current buffer.', inputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] } },
   { name: 'get_console_logs', description: 'Live console stream (log/info/warn/error/debug) captured from the iframe. Call this whenever the user mentions a bug, error, warning, broken behavior, unexpected output, or says "schau in die Konsole / check the console / was steht in der Konsole". Pass since_ms (typically 60000 for the last minute) to keep payloads small. Pass level="error" to filter for just errors.', inputSchema: { type: 'object', properties: { since_ms: { type: 'number' }, level: { type: 'string', enum: ['log', 'info', 'warn', 'error', 'debug'] } } } },
@@ -34,7 +34,7 @@ left pane to "select" it for debugging.
 
 ## What happens when the user selects an element
 
-The user alt+shift-clicks elements (or alt+shift-drags regions) in the
+The user cmd-clicks elements (or cmd-drags regions) in the
 left pane. Every pick ACCUMULATES into a multi-select buffer shown as
 numbered chips above the terminal. Each pick has two server-side
 effects:
@@ -87,7 +87,7 @@ If the issue looks network-related (API call, fetch, loading state,
 
 ## Common tools (full list via ListTools)
 
-- get_pointed_element    — last Alt-clicked element, full context
+- get_pointed_element    — last Cmd-clicked element, full context
 - get_pointed_history    — last N selections
 - get_computed_styles    — styles for any CSS selector
 - get_source_location    — source-map file:line for a selector
