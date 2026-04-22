@@ -51,6 +51,14 @@ export declare class SelectionBuffer {
     remove(id: string): boolean;
     clear(): void;
     rename(id: string, label: string): boolean;
+    /** Patch the MOST-RECENT buffer entry matching `cssSelector` with a
+     *  screenshot dataURL. Used by the async enrichment path — inject
+     *  emits the pointer event immediately with screenshotDataUrl:null
+     *  so the chip appears instantly, then sends a pointer-enrich event
+     *  once html2canvas finishes. We match by selector (most recent
+     *  takes priority) so rapid successive picks on the same element
+     *  patch the latest one. */
+    enrichWithScreenshot(cssSelector: string, screenshotDataUrl: string): boolean;
     list(): BufferedSelection[];
     summaries(): SelectionSummary[];
     size(): number;

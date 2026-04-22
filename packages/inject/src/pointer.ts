@@ -92,55 +92,53 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
 
   document.addEventListener('mouseup', (e) => {
     if (!pickingActive) { regionStart = null; return; }
-    if (regionStart) {
-      const dx = Math.abs(e.clientX - regionStart.x);
-      const dy = Math.abs(e.clientY - regionStart.y);
-      if (dx > 5 || dy > 5) {
-        const start = regionStart;
-        const end = { x: e.clientX, y: e.clientY };
-        regionStart = null;
-        overlay.hideRegionBox();
-        // Critical ordering: set suppressNextClick BEFORE we kick
-        // off emitRegion. emitRegion awaits screenshot capture +
-        // source-map lookup (hundreds of ms); meanwhile the browser
-        // is about to fire the post-mouseup `click` synchronously.
-        // Previously the flag was set after await, so the click
-        // handler saw suppressNextClick=false and the drag would
-        // ALSO produce an element pick — that's the "body selected
-        // on every drag" bug users kept hitting.
-        suppressNextClick = true;
-        setTimeout(() => { suppressNextClick = false; }, 500);
-        e.preventDefault(); e.stopPropagation();
-        // Picking IS user intent to see overlays. Local-hint: force
-        // the idle state so the new frame shows immediately, even
-        // if the server is still reporting busy (e.g. claude's
-        // stream hasn't fallen silent yet). If the server later
-        // still says busy, we'll follow; but the user sees their
-        // fresh pick without the 1.5 s idle-debounce delay.
-        overlay.setBusy(false);
-        void emitRegion(dispatcher, start, end);
-        return;
-      }
-    }
-    regionStart = null;
-  }, true);
-
-  document.addEventListener('click', async (e) => {
-    if (!pickingActive) return;
-    e.preventDefault(); e.stopPropagation();
-    if (suppressNextClick) {
-      suppressNextClick = false;
+    if (!regionStart) return;
+    const dx = Math.abs(e.clientX - regionStart.x);
+    const dy = Math.abs(e.clientY - regionStart.y);
+    if (dx > 5 || dy > 5) {
+      // --- region drag path ---
+      const start = regionStart;
+      const end = { x: e.clientX, y: e.clientY };
+      regionStart = null;
+      overlay.hideRegionBox();
+      suppressNextClick = true;
+      setTimeout(() => { suppressNextClick = false; }, 500);
+      e.preventDefault(); e.stopPropagation();
+      overlay.setBusy(false);
+      void emitRegion(dispatcher, start, end);
       return;
     }
+    // --- element pick path ---
+    // Emit the pick here on mouseup instead of the click event.
+    // Chrome-on-Mac sometimes swallows or re-routes the click event
+    // for modifier-click gestures (Cmd+Click on links = "open in
+    // new tab"; Cmd+Click on some inputs/buttons goes through
+    // native handlers before firing click). Multi-select was
+    // "sometimes not registering" exactly because of this — picking
+    // on mouseup is identical from the user's perspective but
+    // reliable regardless of what Chrome does with the click.
     const el = e.target as Element;
-    // Hide the live hover frame as soon as we commit a click —
-    // otherwise hover + selected show at the same time and it looks
-    // like we've selected two things. The actual selected frame
-    // comes back through the buffer-update broadcast.
+    regionStart = null;
     overlay.hideHover();
     overlay.hideRegionBox();
-    overlay.setBusy(false); // user interaction → show overlays now
-    await emitPointer(dispatcher, el, 'element');
+    // Suppress the native click too so links don't open new tabs
+    // and buttons don't trigger their defaults while we're picking.
+    suppressNextClick = true;
+    setTimeout(() => { suppressNextClick = false; }, 500);
+    e.preventDefault(); e.stopPropagation();
+    overlay.setBusy(false);
+    void emitPointer(dispatcher, el, 'element');
+  }, true);
+
+  // Safety net: if a click somehow fires while picking is active
+  // (e.g. on platforms where mouseup → click behaves differently),
+  // swallow it so the app underneath doesn't receive a stray click
+  // at the picker target. The real pick is already in flight from
+  // mouseup above.
+  document.addEventListener('click', (e) => {
+    if (!pickingActive) return;
+    e.preventDefault(); e.stopPropagation();
+    if (suppressNextClick) suppressNextClick = false;
   }, true);
 
   // Escape clears the entire multi-select buffer server-side. The
@@ -160,10 +158,9 @@ async function emitPointer(
 ): Promise<void> {
   const r = el.getBoundingClientRect();
   const styles = filterComputedStyles(window.getComputedStyle(el));
-  const [screenshot, sourceLocation] = await Promise.all([
-    captureElementScreenshot(el, 20),
-    lookupSourceLocation(el),
-  ]);
+  // source-map lookup is a few sync property reads through React's
+  // __reactFiber debug hook — cheap, include in the base event.
+  const sourceLocation = await lookupSourceLocation(el);
   const ancestors: Array<any> = [];
   let cur = el.parentElement;
   while (cur && cur !== document.body.parentElement) {
@@ -179,6 +176,13 @@ async function emitPointer(
   for (const attr of Array.from(el.attributes)) {
     if (attr.name.startsWith('data-')) dataAttributes[attr.name] = attr.value;
   }
+  const cssSelector = uniqueSelector(el);
+  // Fire the pointer event IMMEDIATELY with a null screenshot. The
+  // chip in the shell panel only needs selector + label + kind +
+  // pathname — all present here. html2canvas is expensive (~0.5–1.5 s
+  // on complex pages) and blocking on it made the chip appear long
+  // after the click. We enrich the buffer entry with the screenshot
+  // asynchronously below once html2canvas finishes.
   dispatcher.send({
     type: 'pointer',
     timestamp: Date.now(),
@@ -190,16 +194,34 @@ async function emitPointer(
       classes: Array.from(el.classList),
       dataAttributes,
       outerHTML: (el.outerHTML || '').slice(0, 5000),
-      cssSelector: uniqueSelector(el),
+      cssSelector,
       boundingBox: { x: r.left, y: r.top, width: r.width, height: r.height },
       textContent: (el.textContent || '').slice(0, 500),
       computedStyles: styles,
-      screenshotDataUrl: screenshot,
+      screenshotDataUrl: null,
       sourceLocation,
       ancestors,
       ...(regionRect ? { regionRect } : {}),
     },
   });
+
+  // Background enrichment: once html2canvas delivers, patch the
+  // freshly-added buffer entry with the screenshot so
+  // get_pointed_element returns it on subsequent claude calls.
+  // If claude calls the tool before this resolves it just gets
+  // null for the screenshot — the rest of the payload is already
+  // there.
+  captureElementScreenshot(el, 20)
+    .then((screenshot) => {
+      if (!screenshot) return;
+      dispatcher.sendRaw({
+        type: 'pointer-enrich',
+        timestamp: Date.now(),
+        url: window.location.href,
+        payload: { cssSelector, screenshotDataUrl: screenshot },
+      });
+    })
+    .catch(() => {});
 }
 
 async function emitRegion(

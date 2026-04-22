@@ -96,6 +96,20 @@ async function main(): Promise<void> {
         if (selectionBuffer.rename(id, label)) syncBuffer();
         return;
       }
+      if (ev.type === 'pointer-enrich') {
+        const { cssSelector, screenshotDataUrl } = ev.payload as {
+          cssSelector: string;
+          screenshotDataUrl: string | null;
+        };
+        if (screenshotDataUrl) {
+          selectionBuffer.enrichWithScreenshot(cssSelector, screenshotDataUrl);
+          // No buffer-update broadcast needed — chip UI doesn't
+          // carry the screenshot, and the overlay uses live DOM.
+          // get_pointed_element will return the patched payload
+          // on claude's next call.
+        }
+        return;
+      }
       if (ev.type === 'send-selections') {
         // "Send to claude" button in the buffer panel. Programmatic
         // Enter in the pty — whatever the user has typed in claude's

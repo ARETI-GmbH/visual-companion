@@ -1,4 +1,4 @@
-export type EventType = 'pointer' | 'console' | 'network' | 'mutation' | 'navigation' | 'error' | 'clear-selection' | 'remove-selection' | 'rename-selection' | 'send-selections';
+export type EventType = 'pointer' | 'pointer-enrich' | 'console' | 'network' | 'mutation' | 'navigation' | 'error' | 'clear-selection' | 'remove-selection' | 'rename-selection' | 'send-selections';
 export interface BaseEvent {
     id: string;
     timestamp: number;
@@ -95,4 +95,10 @@ export type CompanionEvent = (BaseEvent & {
 }) | (BaseEvent & {
     type: 'send-selections';
     payload: unknown;
+}) | (BaseEvent & {
+    type: 'pointer-enrich';
+    payload: {
+        cssSelector: string;
+        screenshotDataUrl: string | null;
+    };
 });

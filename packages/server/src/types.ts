@@ -1,5 +1,6 @@
 export type EventType =
   | 'pointer'
+  | 'pointer-enrich'
   | 'console'
   | 'network'
   | 'mutation'
@@ -66,4 +67,5 @@ export type CompanionEvent =
   | (BaseEvent & { type: 'clear-selection'; payload: unknown })
   | (BaseEvent & { type: 'remove-selection'; payload: { id: string } })
   | (BaseEvent & { type: 'rename-selection'; payload: { id: string; label: string } })
-  | (BaseEvent & { type: 'send-selections'; payload: unknown });
+  | (BaseEvent & { type: 'send-selections'; payload: unknown })
+  | (BaseEvent & { type: 'pointer-enrich'; payload: { cssSelector: string; screenshotDataUrl: string | null } });
