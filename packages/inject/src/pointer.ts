@@ -19,8 +19,8 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
   // selected after drag" bug users saw).
   let suppressNextClick = false;
 
-  function refreshMode(e: KeyboardEvent): void {
-    const shouldBeActive = e.altKey && e.shiftKey;
+  function setPicking(alt: boolean, shift: boolean): void {
+    const shouldBeActive = alt && shift;
     if (shouldBeActive && !pickingActive) {
       pickingActive = true;
       document.body.style.cursor = 'crosshair';
@@ -40,8 +40,18 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
       regionStart = null;
     }
   }
-  document.addEventListener('keydown', refreshMode);
-  document.addEventListener('keyup', refreshMode);
+  // Keyboard events only reach the iframe while the iframe has focus.
+  // If the user was typing in claude's terminal and then moves the
+  // mouse over the iframe with Alt+Shift already held, keydown never
+  // fired on us — so picking wouldn't activate until they clicked.
+  // MouseEvents carry altKey/shiftKey too, so we also sync from
+  // mousemove: hovering into the iframe with the modifiers held
+  // flips us into picking mode immediately. Cheap (same state
+  // transitions as keyboard path).
+  document.addEventListener('keydown', (e) => setPicking(e.altKey, e.shiftKey));
+  document.addEventListener('keyup', (e) => setPicking(e.altKey, e.shiftKey));
+  document.addEventListener('mousemove', (e) => setPicking(e.altKey, e.shiftKey), true);
+  document.addEventListener('mouseenter', (e) => setPicking(e.altKey, e.shiftKey));
 
   // Belt-and-braces: prevent any selectstart while picking is active
   // (covers edge cases where the style reset didn't propagate).

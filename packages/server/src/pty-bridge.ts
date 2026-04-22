@@ -174,10 +174,14 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       `[vc] commit OK: buf=${userBuffer.length} prefixLen=${pendingPrefix.length}\n`,
     );
     // Send the edit (delete + retype) and the Enter in TWO separate
-    // writes, with a short gap between them. A single combined write
-    // gets classified by Ink/Claude Code as a paste, which means the
-    // terminating \r becomes a literal newline in the prompt instead
-    // of a submit — that was the "user has to hit Enter twice" bug.
+    // writes, with a short gap. A single combined write gets classified
+    // by Ink/Claude Code as a paste — the trailing \r then becomes a
+    // literal newline in the prompt and the user has to press Enter
+    // again. Originally 60ms was enough, but the multi-select prefix
+    // can now be 500+ bytes ("[markiert: #1=..., #2=..., #3=...]"),
+    // so Ink's coalescing window gets beaten more often. 180 ms is
+    // comfortably beyond what we've seen in practice, and still feels
+    // like a normal Enter from the user's side.
     const deletion = '\x7f'.repeat(userBuffer.length);
     pty.write(deletion + pendingPrefix + userBuffer);
     const pinned = pty;
@@ -185,7 +189,7 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       try {
         if (currentPty === pinned) pinned.write('\r');
       } catch {}
-    }, 60);
+    }, 180);
     userBuffer = '';
     // pendingPrefix stays sticky — the user expects claude to keep
     // the marked element in mind across navigation and follow-up

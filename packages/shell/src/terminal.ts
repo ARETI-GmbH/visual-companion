@@ -24,6 +24,16 @@ export function initTerminal(opts: { container: HTMLElement }): void {
   term.focus();
   opts.container.addEventListener('click', () => term.focus());
 
+  // Refit whenever the container's size changes — not just on window
+  // resize. The right pane's height shifts every time the selection-
+  // buffer chip panel appears or grows, and when the user drags the
+  // divider. Without this, xterm kept its old row count and the
+  // input line slid below the visible area mid-reply.
+  const ro = new ResizeObserver(() => {
+    try { fitAddon.fit(); } catch { /* xterm not yet laid out */ }
+  });
+  ro.observe(opts.container);
+
   const ws = new WebSocket(`ws://${window.location.host}/_companion/pty`);
   ws.addEventListener('open', () => {
     term.write('\x1b[90mConnecting to claude...\x1b[0m\r\n');
