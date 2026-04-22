@@ -210,18 +210,22 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
   let replayBuffer = '';
   let ptyOutputWired = false;
 
-  // Busy/idle detection: claude is "busy" any time the pty streams
-  // output; after IDLE_DEBOUNCE_MS of silence we call the change
-  // hook with idle=true. Threshold is ~450 ms — long enough to
-  // ignore the small bursts of cursor-repositioning Ink does while
-  // idle (keep-alive paints), short enough that overlays reappear
-  // almost immediately after claude finishes a reply.
-  const IDLE_DEBOUNCE_MS = 450;
+  // Busy/idle detection driven by pty-output activity. Empirically
+  // 450 ms was too short — Ink/Claude-Code keeps repainting its
+  // status line + cursor for a while after the "real" turn ends
+  // (token totals, "Cogitated for 42s", stuttering spinner decay),
+  // and those small bursts kept the debounce alive forever. 1500 ms
+  // is a comfortable over-estimate: overlays reappear a touch later
+  // but they actually reappear.
+  const IDLE_DEBOUNCE_MS = 1500;
   let isBusy = false;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let busyStartedAt = 0;
   function markBusy(): void {
     if (!isBusy) {
       isBusy = true;
+      busyStartedAt = Date.now();
+      process.stderr.write(`[vc] claude-activity → BUSY\n`);
       try { opts.onActivityChange?.(true); } catch {}
     }
     if (idleTimer) clearTimeout(idleTimer);
@@ -229,6 +233,8 @@ export function registerPtyBridge(app: FastifyInstance, opts: PtyBridgeOptions):
       idleTimer = null;
       if (isBusy) {
         isBusy = false;
+        const dur = Date.now() - busyStartedAt;
+        process.stderr.write(`[vc] claude-activity → IDLE after ${dur}ms\n`);
         try { opts.onActivityChange?.(false); } catch {}
       }
     }, IDLE_DEBOUNCE_MS);

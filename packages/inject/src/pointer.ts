@@ -101,6 +101,13 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
         suppressNextClick = true;
         setTimeout(() => { suppressNextClick = false; }, 500);
         e.preventDefault(); e.stopPropagation();
+        // Picking IS user intent to see overlays. Local-hint: force
+        // the idle state so the new frame shows immediately, even
+        // if the server is still reporting busy (e.g. claude's
+        // stream hasn't fallen silent yet). If the server later
+        // still says busy, we'll follow; but the user sees their
+        // fresh pick without the 1.5 s idle-debounce delay.
+        overlay.setBusy(false);
         void emitRegion(dispatcher, start, end);
         return;
       }
@@ -122,6 +129,7 @@ export function installPointer(dispatcher: Dispatcher, overlay: Overlay): void {
     // comes back through the buffer-update broadcast.
     overlay.hideHover();
     overlay.hideRegionBox();
+    overlay.setBusy(false); // user interaction → show overlays now
     await emitPointer(dispatcher, el, 'element');
   }, true);
 
