@@ -33,10 +33,16 @@ export function initIframe(opts: IframeOptions): void {
     try {
       const iframeHref = iframe.contentWindow?.location.href;
       if (!iframeHref) return;
-      const frameUrl = new URL(iframeHref);
-      urlInput.value = upstreamOrigin
-        ? upstreamOrigin + frameUrl.pathname + frameUrl.search + frameUrl.hash
-        : iframeHref;
+      // Don't trample the URL bar while the user is editing it —
+      // every iframe redirect / HMR fires another load, and the
+      // overwrite used to silently restore the pre-edit value,
+      // making the URL field feel "uneditable".
+      if (document.activeElement !== urlInput) {
+        const frameUrl = new URL(iframeHref);
+        urlInput.value = upstreamOrigin
+          ? upstreamOrigin + frameUrl.pathname + frameUrl.search + frameUrl.hash
+          : iframeHref;
+      }
 
       const doc = iframe.contentDocument;
       if (doc) {
@@ -77,7 +83,12 @@ export function initIframe(opts: IframeOptions): void {
     if (e.key !== 'Enter') return;
     const raw = urlInput.value.trim();
     if (!raw) return;
-    iframe.src = resolveToProxyPath(raw, upstreamOrigin);
+    const resolved = resolveTarget(raw, upstreamOrigin);
+    // Blur the input so the load handler above is free to refresh
+    // the display — otherwise it'd skip updating because we're
+    // still focused and the URL bar would stay showing raw.
+    urlInput.blur();
+    iframe.src = resolved;
   });
 
   // Global keybindings
@@ -125,22 +136,44 @@ function stripTrailingSlash(s: string): string {
 }
 
 /**
- * Convert whatever the user typed into an iframe src on the proxy origin.
+ * Convert whatever the user typed into an iframe src. Three cases:
  *
- *   "http://localhost:3000/foo?x=1"  (matches upstream)  → "/foo?x=1"
- *   "/foo"                                                → "/foo"
- *   "foo"                                                 → "/foo"
- *   "https://other.example/..." (non-upstream)            → "/" (fallback; cross-origin)
+ * 1. "http://localhost:3000/foo?x=1"  (matches upstream)  → "/foo?x=1"
+ *    Stays inside the proxy — companion keeps working.
+ *
+ * 2. "https://other.example/..." OR "other.example/..."   → raw URL
+ *    External origin: load directly, bypassing the proxy. Companion
+ *    features (Alt-pick, console/network capture) won't work on
+ *    external sites; that's expected. X-Frame-Options on the other
+ *    side may block the load entirely — out of our hands.
+ *
+ * 3. "/foo" or "foo"                                       → "/foo"
+ *    Plain path on the current upstream.
+ *
+ * The middle case used to route through the catch-all and get
+ * prepended with "/" — so "aris.example.com/foo" became the path
+ * "/aris.example.com/foo" on the current upstream, which at best
+ * 404s and at worst silently matches a SPA catchall route.
  */
-function resolveToProxyPath(raw: string, upstreamOrigin: string): string {
-  try {
-    const parsed = new URL(raw);
+function resolveTarget(raw: string, upstreamOrigin: string): string {
+  let parsed: URL | null = null;
+  try { parsed = new URL(raw); } catch {
+    // No scheme — but is it domain-shaped? "a.b", "foo.com/bar", etc.
+    // Heuristic: first segment before any "/" contains a dot and is
+    // made of domain-legal chars. This avoids eating plain paths
+    // like "/foo/bar" and single-segment routes like "settings".
+    const head = raw.split(/[/?#]/, 1)[0];
+    if (/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/.test(head)) {
+      try { parsed = new URL('https://' + raw); } catch {}
+    }
+  }
+  if (parsed) {
     if (upstreamOrigin && parsed.origin === upstreamOrigin) {
       return parsed.pathname + parsed.search + parsed.hash;
     }
-    return '/';
-  } catch {
-    if (raw.startsWith('/')) return raw;
-    return '/' + raw;
+    // External — load directly, bypass proxy.
+    return parsed.toString();
   }
+  if (raw.startsWith('/')) return raw;
+  return '/' + raw;
 }

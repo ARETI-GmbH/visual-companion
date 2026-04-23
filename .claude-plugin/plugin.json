@@ -1,6 +1,6 @@
 {
   "name": "visual-companion",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Unified Chrome-App-Window mit Live-Pointer-Debugging für Web-App-Entwicklung. Alt+Click im Browser-Pane → Claude kennt das Element (DOM, Styles, Screenshot, Source-Map, Ancestors).",
   "author": {
     "name": "ARETI GmbH",
