@@ -20,7 +20,9 @@
 
   <main class="main">
     <section class="pane pane-left">
-      <iframe id="app-frame" src="/app/" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+      <iframe id="app-frame" src="/app/"
+        allow="clipboard-read; clipboard-write; fullscreen"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-presentation"></iframe>
       <div class="pill hint">⌘ halten zum Zeigen</div>
       <div class="pill status" id="proxy-status">● Proxy verbunden</div>
     </section>
